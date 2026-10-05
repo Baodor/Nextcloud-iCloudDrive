@@ -27,7 +27,7 @@
   const date = value => value ? new Date(value).toLocaleString(de ? 'de-DE' : 'en-GB',{dateStyle:'medium',timeStyle:'short'}) : '—';
   const bytes = value => {let n=Number(value||0),i=0;while(n>=1024&&i<4){n/=1024;i++;}return `${n.toFixed(i?1:0)} ${['B','KiB','MiB','GiB','TiB'][i]}`;};
   async function api(endpoint, method='GET', payload) {
-    const url = window.OC.generateUrl('/ocs/v2.php/apps/icloud_drive/api/' + endpoint) + (endpoint.includes('?')?'&':'?') + 'format=json';
+    const url = window.OC.linkToOCS('apps/icloud_drive/api', 2) + endpoint + (endpoint.includes('?')?'&':'?') + 'format=json';
     const response = await fetch(url, {method, credentials:'same-origin',headers:{'Content-Type':'application/json','OCS-APIRequest':'true',requesttoken:window.OC.requestToken}, ...(payload !== undefined?{body:JSON.stringify({payload})}:{})});
     let envelope;try{envelope=await response.json();}catch{throw new Error(L('Unexpected server response. Check the Nextcloud log.','Unerwartete Serverantwort. Prüfe das Nextcloud-Protokoll.'));}
     const result=envelope.ocs?.data ?? envelope;

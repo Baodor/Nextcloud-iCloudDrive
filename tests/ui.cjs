@@ -18,7 +18,7 @@ const job = {id:'a'.repeat(32),name:'Documents',icloud_path:'Documents',nextclou
       let saved;
       await page.route('https://bridge.test/**',async route=>{
         const url=new URL(route.request().url());
-        if(url.pathname==='/')return route.fulfill({contentType:'text/html',body:`<!doctype html><html lang="${language}"><meta charset="utf-8"><style>body{margin:0;height:100vh}button{border:1px solid #e3e8ef;background:white} ${css}</style><div id="icloud-bridge" data-admin="true"></div><script>window.OC={generateUrl:x=>x,requestToken:'test-token'}</script><script>${js}</script></html>`});
+        if(url.pathname==='/')return route.fulfill({contentType:'text/html',body:`<!doctype html><html lang="${language}"><meta charset="utf-8"><style>body{margin:0;height:100vh}button{border:1px solid #e3e8ef;background:white} ${css}</style><div id="icloud-bridge" data-admin="true"></div><script>window.OC={linkToOCS:(x,v)=>'/ocs/v'+v+'.php/'+x+'/',requestToken:'test-token'}</script><script>${js}</script></html>`});
         const endpoint=url.pathname.split('/api/')[1];
         let data={};
         if(endpoint==='state')data=fixture;
