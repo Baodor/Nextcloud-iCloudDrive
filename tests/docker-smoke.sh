@@ -49,9 +49,12 @@ from pathlib import Path
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 import bridge.server
+from cryptography.fernet import Fernet
 assert os.getuid() == 10001
 assert bridge.server.__file__ == "/app/bridge/server.py"
 assert not os.access("/app/bridge/server.py", os.W_OK)
+cipher = Fernet(Fernet.generate_key())
+assert cipher.decrypt(cipher.encrypt(b"docker-smoke")) == b"docker-smoke"
 for name in ("config_password.py", "access-check.txt"):
     assert (Path("/app") / name).read_text()
 with urlopen("http://127.0.0.1:8080/health", timeout=5) as response:

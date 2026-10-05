@@ -6,7 +6,8 @@ bridge="bridge-smoke-$version"
 network="icloud-smoke-$version"
 token="temporary-integration-token-with-at-least-48-characters"
 password="temporary-integration-password"
-cleanup() { docker rm -f "$nc" "$bridge" >/dev/null 2>&1 || true; docker network rm "$network" >/dev/null 2>&1 || true; }
+setup_dir="$(mktemp -d)"
+cleanup() { docker rm -f "$nc" "$bridge" >/dev/null 2>&1 || true; docker network rm "$network" >/dev/null 2>&1 || true; rm -rf -- "$setup_dir"; }
 trap cleanup EXIT
 diagnostics() {
   docker logs --tail=30 "$nc" 2>&1 || true
@@ -41,9 +42,15 @@ for attempt in $(seq 1 30); do
   sleep 1
 done
 if [[ "$ready" != true ]]; then docker logs "$bridge"; exit 1; fi
-bash scripts/install-nextcloud-app.sh "$nc"
-docker exec -u www-data "$nc" php occ config:app:set icloud_drive worker_url --value="http://$bridge:8080"
-docker exec -u www-data "$nc" php occ config:app:set icloud_drive worker_token --value="$token"
+printf '%s\n' "$token" > "$setup_dir/api_token"
+chmod 600 "$setup_dir/api_token"
+if [[ "$(id -u)" == 0 ]]; then
+  chown 10001:10001 "$setup_dir/api_token"
+else
+  sudo -n chown 10001:10001 "$setup_dir/api_token"
+fi
+BRIDGE_API_TOKEN_FILE="$setup_dir/api_token" BRIDGE_WORKER_URL="http://$bridge:8080" \
+  bash scripts/setup-nextcloud-app.sh "$nc"
 docker exec -e "OC_PASS=$password" -u www-data "$nc" php occ user:add --password-from-env member
 echo "Checking member OCS state"
 # Recent Nextcloud releases briefly retain pre-installation appconfig in APCu.

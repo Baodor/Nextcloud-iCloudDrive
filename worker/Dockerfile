@@ -8,7 +8,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
 WORKDIR /app
 ENV PYTHONPATH=/app PYTHONDONTWRITEBYTECODE=1
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Installed packages must also be readable when the builder inherits umask 077.
+RUN umask 022 && python3 -m pip install --no-cache-dir -r requirements.txt \
+    && chmod -R a+rX /usr/local/lib/python3.12/site-packages
 COPY bridge ./bridge
 COPY config_password.py access-check.txt ./
 # COPY preserves local permissions, including a checkout made with umask 077.

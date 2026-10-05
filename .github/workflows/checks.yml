@@ -9,13 +9,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Build worker with private checkout permissions
+      - name: Build worker with private checkout and restrictive build umask
         run: |
           context="$(mktemp -d)"
           trap 'rm -rf -- "$context"' EXIT
           cp -R worker/. "$context/"
           find "$context" -type d -exec chmod 700 {} +
           find "$context" -type f -exec chmod 600 {} +
+          sed -i 's/^RUN /RUN umask 077 \&\& /' "$context/Dockerfile"
           docker build -t icloud-bridge:test "$context"
       - name: Smoke-test production Compose startup
         run: bash tests/docker-smoke.sh
@@ -45,7 +46,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        version: ['30', '35']
+        version: ['30', '34', '35']
     steps:
       - uses: actions/checkout@v4
       - name: Build and smoke-test Nextcloud integration

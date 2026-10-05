@@ -39,7 +39,7 @@ For live browsing, a separate read-only rclone WebDAV process is started on loop
 
 ## Requirements and compatibility
 
-- Existing Nextcloud with PHP 8.1 or newer. App metadata targets Nextcloud **30–35**. The CI smoke-test matrix covers 30 and 35; other versions within the declared range still need installation testing.
+- Existing Nextcloud with PHP 8.1 or newer. App metadata targets Nextcloud **30–35**. The CI smoke-test matrix covers 30, 34 and 35; other versions within the declared range still need installation testing.
 - Docker Engine and the Docker Compose plugin on Linux for the worker.
 - Python 3 on the host for generating secrets. No Python packages are needed on the host.
 - An Apple account with iCloud Drive and two-factor authentication.
@@ -96,6 +96,16 @@ The secrets script keeps existing keys. Do not regenerate the encryption key aft
 **Back up the `secrets` directory together with the Compose data volume.** The encryption key is required to restore the encrypted configuration and account credentials. Losing the key means reconnecting accounts; retain the bisync state and inspect the folders before reinitializing anything.
 
 ### 3. Install the Nextcloud app
+
+For automatic installation and service configuration after the worker is healthy:
+
+```bash
+bash scripts/setup-nextcloud-app.sh NEXTCLOUD_CONTAINER
+```
+
+This runs the installer, enables External storage, and stores the existing API token encrypted through Nextcloud's crypto service. It reads `secrets/api_token` using sudo when needed and does not display it. The service URL defaults to `http://icloud-bridge:8080`; override it with `BRIDGE_WORKER_URL`. `BRIDGE_API_TOKEN_FILE` selects an existing token file. After this command, continue at step 5. The path/user overrides described below also apply.
+
+For installation with manual administrator configuration instead:
 
 ```bash
 bash scripts/install-nextcloud-app.sh NEXTCLOUD_CONTAINER
@@ -260,6 +270,7 @@ This stops active transfers and removes bridge credentials, mappings and run rec
 |---|---|
 | Cannot reach the bridge | Shared Docker network, `http://icloud-bridge:8080`, administrator token and container health |
 | `ModuleNotFoundError: No module named 'bridge'` during startup | Pull the latest code and rebuild/recreate the worker: `git pull --ff-only` then `docker compose up -d --build --force-recreate --wait --wait-timeout 120`. The image normalizes source permissions and fixes the Python import path; retain your secrets and data volume. |
+| `PermissionError` for `site-packages/cryptography` during build/startup | Pull the latest code, run `docker compose build --no-cache icloud-bridge`, then `docker compose up -d --force-recreate --wait --wait-timeout 120 icloud-bridge`. The image sets the installation umask and makes installed dependencies readable by UID 10001. |
 | Secret-file permission error | Run `sudo chown -R 10001:10001 secrets`; ensure both secret files exist |
 | Worker cannot decrypt config | Restore the original encryption key and volume together; do not generate a replacement key |
 | Nextcloud connection gets 401/HTML | Verify login ID/app password; avoid an interactive SSO/reverse-proxy login in front of WebDAV |
@@ -312,7 +323,7 @@ docker run --rm -v "$PWD/worker/tests:/tests:ro" icloud-bridge:test python3 -m u
 bash tests/docker-smoke.sh
 ```
 
-The Docker smoke test requires Docker Compose and passwordless sudo (or root) to assign temporary secret files to UID 10001. It uses an isolated project, network and data volume, starts the default worker command with the production Compose restrictions, and checks health and API authentication. CI builds its worker image from source directories with mode 0700 and files with mode 0600 to cover private checkouts.
+The Docker smoke test requires Docker Compose and passwordless sudo (or root) to assign temporary secret files to UID 10001. It uses an isolated project, network and data volume, starts the default worker command with the production Compose restrictions, and checks health, cryptography and API authentication. CI builds its worker image from source directories with mode 0700 and files with mode 0600, and injects `umask 077` before each Dockerfile RUN instruction to cover restrictive builders as well as private checkouts.
 
 Optional browser checks use the shipped UI with fixtures; they check English/German forms, saving settings, mount details and mobile overflow. They do not authenticate to Apple:
 
@@ -328,7 +339,7 @@ The Nextcloud smoke test installs the app in an ephemeral official container, ve
 NC_VERSION=30 bash tests/nextcloud-smoke.sh
 ```
 
-GitHub Actions runs worker/unit/rclone tests, PHP linting, browser checks and a Nextcloud 30/35 smoke matrix. Apple authentication and real iCloud transfers are intentionally not part of CI. Inspect the current Actions result before treating a checkout as validated. Build an installable app archive with `python3 scripts/package.py`; it contains only the `icloud_drive` app directory, not the Docker worker or secrets. The app is unsigned and installed manually; it is not an App Store release.
+GitHub Actions runs worker/unit/rclone tests, PHP linting, browser checks and a Nextcloud 30/34/35 smoke matrix. Apple authentication and real iCloud transfers are intentionally not part of CI. Inspect the current Actions result before treating a checkout as validated. Build an installable app archive with `python3 scripts/package.py`; it contains only the `icloud_drive` app directory, not the Docker worker or secrets. The app is unsigned and installed manually; it is not an App Store release.
 
 ## Sources and license
 

@@ -39,7 +39,7 @@ Für die direkte Dateiansicht startet je aktivem Benutzer ein eigener rclone-Web
 
 ## Voraussetzungen und Kompatibilität
 
-- Bestehende Nextcloud mit PHP ab 8.1. Die App-Metadaten akzeptieren **Nextcloud 30–35**. Die CI-Prüfung deckt 30 und 35 ab; weitere Versionen innerhalb des Bereichs benötigen ebenfalls einen Installationstest.
+- Bestehende Nextcloud mit PHP ab 8.1. Die App-Metadaten akzeptieren **Nextcloud 30–35**. Die CI-Prüfung deckt 30, 34 und 35 ab; weitere Versionen innerhalb des Bereichs benötigen ebenfalls einen Installationstest.
 - Docker Engine und Docker-Compose-Plugin unter Linux für die Bridge.
 - Python 3 auf dem Host zur Erzeugung der Schlüssel; dort sind keine zusätzlichen Python-Pakete erforderlich.
 - Apple-Account mit iCloud Drive und Zwei-Faktor-Authentifizierung.
@@ -96,6 +96,16 @@ Das Skript behält vorhandene Schlüssel bei. Erzeuge nach dem Speichern von Zug
 **Sichere das Verzeichnis `secrets` zusammen mit dem Compose-Datenvolume.** Zur Wiederherstellung werden der Schlüssel und die verschlüsselte Konfiguration gemeinsam benötigt. Bei Schlüsselverlust musst du Konten erneut anmelden. Bewahre vorhandene bisync-Zustände auf und prüfe die Ordner, bevor du neu initialisierst.
 
 ### 3. App in Nextcloud installieren
+
+Für automatische Installation und Dienstkonfiguration, sobald die Bridge healthy ist:
+
+```bash
+bash scripts/setup-nextcloud-app.sh NEXTCLOUD_CONTAINER
+```
+
+Das ruft den Installer auf, aktiviert Externer Speicher und hinterlegt den vorhandenen API-Token mit Nextclouds Kryptodienst verschlüsselt. Das Skript liest `secrets/api_token` bei Bedarf mit sudo und zeigt ihn nicht an. Die Dienst-URL ist standardmäßig `http://icloud-bridge:8080`; `BRIDGE_WORKER_URL` überschreibt sie. Mit `BRIDGE_API_TOKEN_FILE` wählst du eine vorhandene Token-Datei. Danach bei Schritt 5 fortfahren. Die unten beschriebenen Pfad-/Benutzeroptionen gelten ebenfalls.
+
+Für eine Installation mit anschließender manueller Administratorkonfiguration:
 
 ```bash
 bash scripts/install-nextcloud-app.sh NEXTCLOUD_CONTAINER
@@ -260,6 +270,7 @@ Das stoppt aktive Übertragungen und entfernt Bridge-Zugangsdaten, Zuordnungen u
 |---|---|
 | Bridge nicht erreichbar | Gemeinsames Docker-Netz, `http://icloud-bridge:8080`, Dienst-Token und Containerzustand |
 | `ModuleNotFoundError: No module named 'bridge'` beim Start | Aktuellen Code holen und Worker neu bauen/erstellen: `git pull --ff-only`, dann `docker compose up -d --build --force-recreate --wait --wait-timeout 120`. Das Image vereinheitlicht die Quelldateirechte und setzt den Python-Importpfad; Schlüssel und Datenvolume behalten. |
+| `PermissionError` für `site-packages/cryptography` beim Bauen/Starten | Aktuellen Code holen, `docker compose build --no-cache icloud-bridge` ausführen, danach `docker compose up -d --force-recreate --wait --wait-timeout 120 icloud-bridge`. Das Image setzt die Installations-Umask und macht installierte Abhängigkeiten für UID 10001 lesbar. |
 | Schlüsseldatei nicht lesbar | `sudo chown -R 10001:10001 secrets`; beide Dateien müssen existieren |
 | Konfiguration nicht entschlüsselbar | Ursprünglichen Schlüssel und passendes Volume wiederherstellen; keinen Ersatzschlüssel erzeugen |
 | Nextcloud liefert 401 oder HTML | Anmelde-ID/App-Passwort prüfen; WebDAV darf nicht hinter einer interaktiven SSO-Seite hängen |
@@ -312,7 +323,7 @@ docker run --rm -v "$PWD/worker/tests:/tests:ro" icloud-bridge:test python3 -m u
 bash tests/docker-smoke.sh
 ```
 
-Der Docker-Starttest benötigt Docker Compose und passwortloses sudo (oder root), um temporäre Schlüsseldateien Benutzer 10001 zuzuweisen. Er verwendet ein eigenes Projekt, Netzwerk und Datenvolume, startet den Standardbefehl mit den produktiven Compose-Einschränkungen und prüft Zustand und API-Anmeldung. Die CI baut ihr Worker-Image aus Quellverzeichnissen mit Modus 0700 und Dateien mit Modus 0600, um restriktive Checkouts abzudecken.
+Der Docker-Starttest benötigt Docker Compose und passwortloses sudo (oder root), um temporäre Schlüsseldateien Benutzer 10001 zuzuweisen. Er verwendet ein eigenes Projekt, Netzwerk und Datenvolume, startet den Standardbefehl mit den produktiven Compose-Einschränkungen und prüft Zustand, Verschlüsselung und API-Anmeldung. Die CI baut ihr Worker-Image aus Quellverzeichnissen mit Modus 0700 und Dateien mit Modus 0600 und setzt vor jedem Dockerfile-RUN-Befehl `umask 077`, um auch restriktive Builder abzudecken.
 
 Optionale Browserprüfungen verwenden die echte ausgelieferte Oberfläche mit Testdaten. Geprüft werden deutsche/englische Formulare, gespeicherte Einstellungen, Einbindungsdaten und Überbreite auf Mobilgeräten; Apple wird dabei nicht angemeldet:
 
@@ -328,7 +339,7 @@ Der Nextcloud-Smoke-Test installiert die App in einem temporären offiziellen Co
 NC_VERSION=30 bash tests/nextcloud-smoke.sh
 ```
 
-GitHub Actions führt Worker-/rclone-Tests, PHP-Syntaxprüfungen, Browserprüfungen und eine Nextcloud-30/35-Matrix aus. Echte Apple-Anmeldung und iCloud-Übertragungen bleiben außerhalb von CI. Prüfe den aktuellen Actions-Status, bevor du eine Fassung als validiert behandelst. `python3 scripts/package.py` erzeugt ein installierbares App-Archiv. Es enthält nur die App `icloud_drive`, keinen Docker-Dienst und keine Schlüssel. Die App ist unsigniert und wird manuell installiert; sie ist keine App-Store-Veröffentlichung.
+GitHub Actions führt Worker-/rclone-Tests, PHP-Syntaxprüfungen, Browserprüfungen und eine Nextcloud-30/34/35-Matrix aus. Echte Apple-Anmeldung und iCloud-Übertragungen bleiben außerhalb von CI. Prüfe den aktuellen Actions-Status, bevor du eine Fassung als validiert behandelst. `python3 scripts/package.py` erzeugt ein installierbares App-Archiv. Es enthält nur die App `icloud_drive`, keinen Docker-Dienst und keine Schlüssel. Die App ist unsigniert und wird manuell installiert; sie ist keine App-Store-Veröffentlichung.
 
 ## Quellen und Lizenz
 
