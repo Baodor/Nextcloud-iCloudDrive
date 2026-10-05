@@ -234,22 +234,25 @@ Auch das Detailfenster aktualisiert Fortschritt und Protokoll live. Am unteren E
 
 Der Worker verwendet `--check-first`, damit jede Übertragungswarteschlange vor dem Kopieren ermittelt wird. Das liefert eine brauchbare Bezugsgröße und verzögert den Kopierbeginn bis zum Ende des Einlesens. rclone hält die Warteschlange im Arbeitsspeicher; sehr hohe Dateizahlen können deshalb mehr RAM benötigen.
 
-### Datei-/Ordnerkonflikte und iWork-Pakete
+### Pages, Numbers und Keynote automatisch kopieren
 
-`is a file not a directory` ist ein echter Synchronisationsfehler. Derselbe Pfad wird auf einer Seite als Datei und auf der anderen als Ordner behandelt. Das kann auftreten, wenn Pages-/Numbers-/Keynote-Dokumentpakete in Nextcloud als Ordner und vom iCloud-Backend als Dateien dargestellt werden. Die UI benennt das betroffene Paket. Vereinheitliche die Darstellungen vor einem erneuten Erstabgleich; die Bridge konvertiert oder entfernt solche Dokumente nicht automatisch.
+Die Einstellung **Pages-, Numbers- und Keynote-Pakete automatisch als vollständige Dokumente kopieren** ist standardmäßig aktiv, auch bei älteren Jobs. Normale `.pages`-, `.numbers`- und `.key`-Dateien kopiert rclone wie andere Dateien. Liegt ein Dokument in Nextcloud als Ordnerpaket vor und stellt iCloud denselben Pfad als Datei dar oder besitzt noch keine Kopie, bereitet die Bridge das vollständige Dokument automatisch vor. Du musst die Dokumente weder einzeln in einer Apple-App neu speichern noch diese Formate vom Abgleich ausnehmen. Stellen beide Seiten das Paket bereits als Ordner dar, kopiert rclone die Bestandteile regulär.
 
-Als vorübergehende Lösung kannst du diese Dokumente vom Job ausnehmen. Ergänze in seinen Ordnereinstellungen die folgenden **Ausschlussmuster**, jeweils eine Zeile (vorhandene Ausschlüsse behalten):
+Vor einem tatsächlichen Lauf sammelt der Worker **alle Dateien und leeren Unterordner eines Pakets** in einem ZIP-Dokument mit dem ursprünglichen Dateinamen und seiner Endung. Die Dateiinhalte bleiben erhalten. Der Worker prüft die CRCs, lädt eine temporäre Kopie über Nextcloud-WebDAV hoch und vergleicht deren SHA-256 mit der lokalen Kopie. Erst nach diesen Prüfungen und einer Versionsprüfung der Quelle verschiebt er das ursprüngliche Ordnerpaket nach:
 
 ```text
-*.pages
-*.pages/**
-*.numbers
-*.numbers/**
-*.key
-*.key/**
+iCloud Bridge Backups/iWork/JOB_ID/RUN_ID/ursprünglicher/relativer/Pfad.pages/
 ```
 
-Die Muster nehmen sowohl die Dokumente selbst als auch ihre Inhalte auf beiden Seiten aus. Vorhandene Dokumente bleiben bestehen, werden aber durch diesen Job nicht abgeglichen. Geänderte Filter machen die bisherige Vorschau/Initialisierung ungültig; danach eine neue Vorschau ausführen, prüfen und erneut initialisieren.
+An den ursprünglichen Pfad in Nextcloud tritt das geprüfte Dokument. Der anschließende rclone-Lauf behandelt es damit als eine Datei. Der Sicherungspfad zeigt beispielhaft den relativen Dokumentpfad; Numbers und Keynote behalten ihre jeweilige Endung. **Die Sicherung des ursprünglichen Pakets bleibt immer erhalten**, auch wenn das allgemeine Archivieren ersetzter oder gelöschter Dateien abgeschaltet ist. Sie liegt außerhalb des Abgleichordners, bis du sie entfernst. Schlägt der Austausch fehl, wird das ursprüngliche Paket wiederhergestellt, sofern der Server erreichbar ist. Ein dauerhaft gespeicherter Wiederherstellungseintrag ermöglicht das Zurücksetzen eines fehlenden Originals nach einem Neustart oder vor dem nächsten Lauf. Bleibt die Wiederherstellung offen, stoppt die weitere Synchronisation.
+
+Eine **Vorschau zeigt ausschließlich den Plan zur Paketvorbereitung**. Sie lädt keine neuen Dokumente hoch und wandelt sie nicht um. Die Wiederherstellung eines in einem früheren tatsächlichen Lauf unterbrochenen Austauschs erfolgt vor jedem neuen Lauf, auch vor einer Vorschau, bevor die Ordner eingelesen werden. Die UI zeigt geplante/vorbereitete Dokumente, das aktuelle Dokument und den Sicherungspfad. Während der Vorbereitung läuft eine Aktivitätsanzeige ohne erfundene Prozentzahl. Beim anschließenden regulären Kopieren gilt die gemessene Übertragungsprozentzahl. Die Paketanzahl wird getrennt von den Vorschau-Datenmengen von rclone angezeigt.
+
+Falls du zuvor `*.pages`, `*.pages/**`, `*.numbers`, `*.numbers/**`, `*.key` oder `*.key/**` als Übergangslösung eingetragen hast, entferne diese Ausschlüsse einmal in den Filtereinstellungen des Jobs. Ausdrückliche Ausschlüsse bleiben wirksam; die Bridge schreibt deine Filter nicht ungefragt um. Änderungen an Filtern oder der Paketeinstellung erfordern bei Zwei-Wege-Jobs eine neue Vorschau und Initialisierung. Nach einem früheren fehlgeschlagenen Lauf erneut Vorschau ausführen, den gewählten Vorrang beim Erstabgleich prüfen und initialisieren, bevor du den Zeitplan wieder aktivierst.
+
+Die Vorbereitung benötigt temporären Worker-Speicher für das größte vollständige Paket sowie Platz in Nextcloud für das Dokument und die Originalsicherung. Lokale temporäre Archive entfernt der Worker nach dem Versuch. Fehlgeschlagene temporäre Uploads können zur Prüfung im Unterordner `incoming` der Laufsicherung liegen bleiben. Bearbeite ein Paket während der Vorbereitung nicht; eine erkannte Quelländerung stoppt den Lauf und bewahrt das Original.
+
+Automatische Tests prüfen die unveränderten Dateiinhalte, Sicherungen, Vorschau, Abbruch/Wiederherstellung und beide Abgleichrichtungen mit echtem Nextcloud-WebDAV und rclone. Sie melden sich nicht bei Apple an und öffnen die erzeugten Dokumente nicht in Apple-Apps. Kontospezifisches iCloud-Verhalten und das Öffnen in Pages/Numbers/Keynote müssen weiterhin bei der Installation geprüft werden.
 
 ## Klassische Nextcloud ohne Docker
 
@@ -298,7 +301,7 @@ Das stoppt aktive Übertragungen und entfernt Bridge-Zugangsdaten, Zuordnungen u
 | Bridge nicht erreichbar | Gemeinsames Docker-Netz, `http://icloud-bridge:8080`, Dienst-Token und Containerzustand |
 | Stoppen/Trennen meldet `Expected a JSON object` | Nextcloud-App aktualisieren: `git pull --ff-only`, danach `bash scripts/install-nextcloud-app.sh nextcloud`. Browser neu laden und erneut versuchen. Älterer App-Code übertrug eine leere Anfrage als `[]` statt `{}`; für diese Korrektur genügt ein App-Update, während der Worker weiterläuft. |
 | Fortschritt wirkt abgeschlossen, während der Lauf weiterläuft | Worker und App aktualisieren. Beim Einlesen und in der Abschlussprüfung ist der Gesamtumfang unbekannt; laufende Prozentwerte gelten für die bekannte Übertragungswarteschlange. Erst ein erfolgreich beendeter Prozess ergibt 100 % für den Lauf. |
-| `is a file not a directory` / iWork-Pakete lassen sich nicht hochladen | Datei-/Ordnerdarstellungen vereinheitlichen oder die betroffenen Pakete vorübergehend mit den obigen Mustern auf beiden Seiten ausschließen. Fehler des beendeten Laufs vor neuer Vorschau/Initialisierung prüfen. Vollständig geprüfte Dateien bedeuten keinen erfolgreichen Abgleich. |
+| `is a file not a directory` / iWork-Pakete lassen sich nicht hochladen | Worker und App aktualisieren, automatische iWork-Paketkopie aktiviert lassen, gegebenenfalls alte iWork-Ausschlussregeln entfernen und erneut Vorschau/Initialisierung ausführen. Die Bridge bereitet vollständige Dokumente vor und sichert die Originalpakete in Nextcloud. Andere Datei-/Ordnerkonflikte weiterhin prüfen. |
 | `ModuleNotFoundError: No module named 'bridge'` beim Start | Aktuellen Code holen und Worker neu bauen/erstellen: `git pull --ff-only`, dann `docker compose up -d --build --force-recreate --wait --wait-timeout 120`. Das Image vereinheitlicht die Quelldateirechte und setzt den Python-Importpfad; Schlüssel und Datenvolume behalten. |
 | `PermissionError` für `site-packages/cryptography` beim Bauen/Starten | Aktuellen Code holen, `docker compose build --no-cache icloud-bridge` ausführen, danach `docker compose up -d --force-recreate --wait --wait-timeout 120 icloud-bridge`. Das Image setzt die Installations-Umask und macht installierte Abhängigkeiten für UID 10001 lesbar. |
 | Schlüsseldatei nicht lesbar | `sudo chown -R 10001:10001 secrets`; beide Dateien müssen existieren |

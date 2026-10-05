@@ -97,6 +97,11 @@ docker exec "$nc" curl -fsS -u "member:$password" -H 'OCS-APIRequest: true' -H '
   -d '{"payload":{}}' \
   'http://localhost/ocs/v2.php/apps/icloud_drive/api/runs/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/stop?format=json' \
   | python3 -c 'import json,sys; run=json.load(sys.stdin)["ocs"]["data"]; assert run["status"] == "stopped",run; assert run["finished"],run'
+echo "Checking complete iWork documents with real Nextcloud WebDAV and rclone"
+docker run --rm --network "$network" -e "NEXTCLOUD_URL=http://$nc" \
+  -e TEST_NC_USER=member -e "TEST_NC_PASSWORD=$password" \
+  -v "$PWD/tests/iwork-nextcloud-smoke.py:/tests/iwork-nextcloud-smoke.py:ro" \
+  icloud-bridge:test python3 /tests/iwork-nextcloud-smoke.py
 echo "Checking empty-payload disconnect through Nextcloud OCS"
 docker exec "$nc" curl -fsS -u "member:$password" -H 'OCS-APIRequest: true' -H 'Content-Type: application/json' \
   -d '{"payload":{}}' \

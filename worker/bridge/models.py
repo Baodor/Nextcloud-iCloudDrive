@@ -96,6 +96,7 @@ def validate_job(data):
         "conflict": conflict, "initial": initial, "schedule": schedule, "timezone": zone,
         "time": clock, "days": sorted(set(days)), "bandwidth": limit, "excludes": excludes,
         "enabled": boolean(data, "enabled", False), "backup": boolean(data, "backup", True),
+        "iwork_packages": boolean(data, "iwork_packages", True),
         "empty_dirs": boolean(data, "empty_dirs", True),
         "interval_minutes": integer(data, "interval_minutes", 1440, 60, 10080),
         "max_delete_percent": integer(data, "max_delete_percent", 10, 0, 50),

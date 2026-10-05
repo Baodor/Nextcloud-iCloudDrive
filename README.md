@@ -234,22 +234,25 @@ The Details dialog updates progress and logs live too. It follows new log output
 
 The worker uses `--check-first` so each transfer queue is collected before copying. This gives a meaningful denominator and delays the start of copying until the scan finishes; rclone holds the pending queue in memory, so very large file counts can require more RAM.
 
-### File/directory conflicts and iWork packages
+### Automatic Pages, Numbers and Keynote copies
 
-`is a file not a directory` is a real synchronization error. The same path is treated as a file on one side and a directory on the other. This can occur when Pages/Numbers/Keynote document packages are exposed as directories on Nextcloud and files by the iCloud backend. The UI identifies the affected package. Resolve the differing representations before another initialization; the bridge does not automatically convert or remove documents.
+The **Automatically copy Pages, Numbers and Keynote packages as complete documents** setting is enabled by default, including for jobs created before this option existed. Ordinary `.pages`, `.numbers` and `.key` files are copied by rclone normally. When Nextcloud holds a document as a folder package and iCloud exposes that path as a file (or has no copy yet), the bridge prepares the complete document automatically. You do not need to resave each document in an Apple app or omit these formats from synchronization. If both sides already expose the package as a directory, rclone copies its contents normally.
 
-As a temporary workaround, keep the documents outside this job by adding the following **exclusion patterns**, one per line, in its folder settings (keep existing exclusions too):
+Before an actual run, the worker collects **every file and empty directory inside each package** into a ZIP document with its original filename and extension. It preserves file contents, checks archive CRCs, uploads a temporary copy through Nextcloud WebDAV and compares its SHA-256 with the local copy. Only after these checks and a source-version check does it move the original folder package into:
 
 ```text
-*.pages
-*.pages/**
-*.numbers
-*.numbers/**
-*.key
-*.key/**
+iCloud Bridge Backups/iWork/JOB_ID/RUN_ID/original/relative/path.pages/
 ```
 
-These patterns exclude the documents themselves as well as their contents on both sides. Existing documents remain, but they will not synchronize through that job. Saving changed filters invalidates its previous preview/initialization; run a new preview, review it, then initialize again.
+The verified document then takes the original path in Nextcloud, so the subsequent rclone run handles it as one file. The backup path above illustrates the relative path of a document; Numbers and Keynote use their respective extensions. **Original package backups are always retained**, even when ordinary replacement/deletion archiving is switched off. They stay outside the synchronized tree until you remove them. A failed promotion restores the original package when the server is reachable. A persisted recovery journal allows the worker to restore a missing original after restart or before the next run; an unresolved recovery stops further synchronization.
+
+A **preview only lists the package preparation plan**; it does not upload or convert new documents. Recovery of a rename interrupted in an earlier actual run is completed before any new run, including a preview, reads the folders. The UI shows the number of complete documents planned/prepared, the current document and the backup location. Preparation uses an activity bar without a fabricated percentage. Once ordinary transfers begin, the existing measured transfer percentage applies. Package preparation counts are separate from rclone's preview byte counts.
+
+If you previously added `*.pages`, `*.pages/**`, `*.numbers`, `*.numbers/**`, `*.key` or `*.key/**` as a workaround, remove those exclusions once in the job's filter settings. Explicit exclusions continue to apply; the bridge does not silently rewrite your filters. Changing filters or this package setting requires a new preview and initialization for two-way jobs. After an earlier failed run, preview again, check the chosen initial priority and initialize before re-enabling the schedule.
+
+Preparation needs temporary worker disk space for the largest complete package, plus room in Nextcloud for the document and its original backup. The worker removes temporary local archives after the attempt. Failed temporary uploads can remain under the run's backup `incoming` directory for review. Do not edit a package during preparation; a detected source change stops the run with the original retained.
+
+Automated tests verify byte-preserving package copies, backups, previews, cancellation/recovery and both sync directions using real Nextcloud WebDAV and rclone. They do not sign into Apple or open the generated documents in Apple's apps; account-specific iCloud handling and opening documents in Pages/Numbers/Keynote still require installation testing.
 
 ## Conventional / non-Docker Nextcloud
 
@@ -298,7 +301,7 @@ This stops active transfers and removes bridge credentials, mappings and run rec
 | Cannot reach the bridge | Shared Docker network, `http://icloud-bridge:8080`, administrator token and container health |
 | Stop/disconnect returns `Expected a JSON object` | Update the Nextcloud app: `git pull --ff-only`, then `bash scripts/install-nextcloud-app.sh nextcloud`. Reload the browser and retry. Older app code encoded an empty request as `[]` instead of `{}`; this fix only needs an app update and can be installed while the worker continues running. |
 | Progress looks complete while the run is still active | Update both worker and app. Scanning and final validation have no known denominator; live percentages apply to the known transfer queue. The process must finish successfully before the run reaches 100%. |
-| `is a file not a directory` / failing iWork package uploads | Resolve the file/directory mismatch or temporarily exclude the affected packages on both sides using the patterns above. Inspect the completed run's errors before previewing/initializing again. A completed check count is not a successful synchronization. |
+| `is a file not a directory` / failing iWork package uploads | Update worker and app, keep automatic iWork package copying enabled, remove old iWork exclusion rules if you added them, then preview and initialize again. The bridge prepares complete documents and preserves original packages in Nextcloud. Other file/directory conflicts still need review. |
 | `ModuleNotFoundError: No module named 'bridge'` during startup | Pull the latest code and rebuild/recreate the worker: `git pull --ff-only` then `docker compose up -d --build --force-recreate --wait --wait-timeout 120`. The image normalizes source permissions and fixes the Python import path; retain your secrets and data volume. |
 | `PermissionError` for `site-packages/cryptography` during build/startup | Pull the latest code, run `docker compose build --no-cache icloud-bridge`, then `docker compose up -d --force-recreate --wait --wait-timeout 120 icloud-bridge`. The image sets the installation umask and makes installed dependencies readable by UID 10001. |
 | Secret-file permission error | Run `sudo chown -R 10001:10001 secrets`; ensure both secret files exist |

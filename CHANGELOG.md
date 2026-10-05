@@ -15,6 +15,7 @@
 - Automatic setup script installs the app and External storage and configures an encrypted bridge token; Nextcloud integration is checked on versions 30, 34 and 35.
 - Empty stop/disconnect requests retain their JSON object shape across the Nextcloud bridge; the UI shows pending cancellation and tests cover OCS cancellation and stopping a real rclone transfer.
 - Phase-aware progress separates folder scanning, comparison, known transfer queues and final validation. The UI displays measured percentages, per-file progress, direction, counts, speed and queue ETA; only successful runs reach 100%. Final JSON statistics survive RC shutdown/timeouts, and file/directory conflicts are explained explicitly.
+- Automatic, default-enabled Pages/Numbers/Keynote package preparation preserves every package member, validates CRC/SHA-256 and source versions, retains original Nextcloud packages and journals guarded WebDAV renames for recovery. Previews remain read-only; UI package counts and tests cover cancellation, recovery and both sync directions with real Nextcloud WebDAV/rclone.
 - Worker safety tests, browser checks, optional real rclone tests and a Nextcloud integration CI matrix.
 
 Apple authentication and account-specific iCloud/ADP behavior require a real-account installation test. This is an initial experimental release, not a signed Nextcloud App Store package.

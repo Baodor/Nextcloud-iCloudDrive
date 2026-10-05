@@ -12,6 +12,7 @@ import uuid
 from .models import BridgeError, MARKER, tenant, path, overlap, validate_job, next_due, make_command
 from .rclone import redact
 from .progress import finish_progress
+from .iwork import IWork, recover as recover_iwork
 
 
 def now():
@@ -33,6 +34,18 @@ class Engine:
         self.version = rc.call("core/version").get("version", "unknown")
         # An interrupted process cannot prove its last changes: pause and retain checkpoints.
         for run in store.records("runs"):
+            if run.get("iwork", {}).get("pending"):
+                try:
+                    recover_iwork(self, run["uid"], run)
+                except Exception as error:
+                    run.update(status="interrupted", finished=now(), error=redact(str(error)))
+                    finish_progress(run)
+                    store.put("runs", run["uid"], run)
+                    job = store.get("jobs", run["uid"], run["job_id"])
+                    if job:
+                        job.update(enabled=False, initialized=False, next_run=None)
+                        store.put("jobs", run["uid"], job)
+                    continue
             if run["status"] in {"running", "queued"}:
                 run.update(status="interrupted", finished=now(), error="Worker restarted during this run. Review and initialize again if required.")
                 finish_progress(run)
@@ -202,8 +215,8 @@ class Engine:
             for other in self.store.records("jobs", uid):
                 if other["id"] != identifier and (overlap(validated["icloud_path"], other["icloud_path"]) or overlap(validated["nextcloud_path"], other["nextcloud_path"])):
                     raise BridgeError("This folder overlaps another job. Choose separate folders.", 409)
-            identity_fields = ("icloud_path", "nextcloud_path", "mode", "excludes", "empty_dirs")
-            unchanged = bool(old) and all(old[k] == validated[k] for k in identity_fields)
+            identity_fields = ("icloud_path", "nextcloud_path", "mode", "excludes", "empty_dirs", "iwork_packages")
+            unchanged = bool(old) and all(old.get(k, True if k == "iwork_packages" else None) == validated[k] for k in identity_fields)
             job = {**validated, "id": identifier or uuid.uuid4().hex, "initialized": bool(unchanged and old.get("initialized")),
                    "created": old["created"] if old else now(), "updated": now(), "last_success": old.get("last_success") if old else None}
             if old and not unchanged:
@@ -239,13 +252,22 @@ class Engine:
             self.transfers.put((uid, run["id"]))
             return self.public_run(run)
 
-    def prepare(self, uid, job, run):
+    def prepare(self, uid, job, run, deadline=None):
+        # A failed MOVE can leave a durable recovery journal. Restore any missing
+        # package before another run reads these folders or considers deletions.
+        with self.lock:
+            for previous in self.store.records("runs", uid):
+                if previous.get("iwork", {}).get("pending"):
+                    recover_iwork(self, uid, previous)
         refs = self.refs(uid, job)
         # Always list real, unfiltered roots before writing or interpreting deletions.
         for side in ("icloud", "nextcloud"):
             run["progress"].update(phase="preparing", side=side)
             self.store.put("runs", uid, run)
             self.rc.call("operations/list", {"fs": refs[side], "remote": ""})
+        iwork = IWork(self, uid, job, run, refs, deadline)
+        iwork.plan()
+        iwork.normalize()
         base = self.root / "state" / job["id"]
         if run["action"] == "preview":
             work = self.root / "previews" / run["id"]
@@ -262,7 +284,8 @@ class Engine:
             for side in ("icloud", "nextcloud"):
                 self.rc.call("operations/copyfile", {"srcFs": str(Path(__file__).resolve().parents[1]), "srcRemote": "access-check.txt",
                                                      "dstFs": refs[side], "dstRemote": MARKER})
-        work.joinpath("filters.txt").write_text("+ " + MARKER + "\n" + "".join("- " + e + "\n" for e in job["excludes"]), encoding="utf-8")
+        excludes = job["excludes"] + (iwork.preview_filters() if run["action"] == "preview" else [])
+        work.joinpath("filters.txt").write_text("+ " + MARKER + "\n" + "".join("- " + e + "\n" for e in excludes), encoding="utf-8")
         command, args, opts = make_command(job, refs, work, run["id"], run["action"])
         if initializing_preview:
             opts.pop("check-access", None)
@@ -280,13 +303,13 @@ class Engine:
             public, _ = self.store.user(uid)
             if not public.get("icloud_connected") or not public.get("nextcloud_connected"):
                 raise BridgeError("A connection was removed before this job started.", 409)
-            command, args, opts, work = self.prepare(uid, job, run)
+            deadline = time.monotonic() + job["timeout_minutes"] * 60
+            command, args, opts, work = self.prepare(uid, job, run, deadline)
             with self.lock:
                 if not self.store.get("runs", uid, run["id"]):
                     raise BridgeError("This bridge account was removed.", 409)
                 transfer = self.rc.start_transfer(command, args, opts)
                 self.transfer = transfer
-            deadline = time.monotonic() + job["timeout_minutes"] * 60
             while True:
                 current = self.store.get("runs", uid, run["id"])
                 if not current or current.get("cancel_requested") or self.stop_event.is_set() or time.monotonic() > deadline:
@@ -337,7 +360,7 @@ class Engine:
                 shutil.rmtree(work, ignore_errors=True)
             records = sorted(self.store.records("runs", uid), key=lambda r: r["started"], reverse=True)
             for old in records[100:]:
-                if old["status"] not in {"running", "queued"}:
+                if old["status"] not in {"running", "queued"} and not old.get("iwork", {}).get("pending"):
                     self.store.delete("runs", uid, old["id"])
 
     def runner(self):
@@ -407,6 +430,7 @@ class Engine:
             if self.dav:
                 self.dav.close_user(uid)
             shutil.rmtree(self.root / "cache" / tenant(uid), ignore_errors=True)
+            shutil.rmtree(self.root / "iwork" / tenant(uid), ignore_errors=True)
             for job in self.store.records("jobs", uid):
                 for state_dir in (self.root / "state").glob(job["id"] + "*"):
                     shutil.rmtree(state_dir, ignore_errors=True)
