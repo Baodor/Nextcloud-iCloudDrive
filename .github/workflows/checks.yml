@@ -33,7 +33,9 @@ jobs:
       - run: npm run test:ui
   nextcloud:
     runs-on: ubuntu-latest
+    timeout-minutes: 12
     strategy:
+      fail-fast: false
       matrix:
         version: ['30', '35']
     steps:

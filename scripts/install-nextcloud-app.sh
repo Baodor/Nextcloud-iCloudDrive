@@ -12,7 +12,7 @@ if [[ -z "$nc_user" ]]; then
 fi
 app_dir="${NEXTCLOUD_APP_DIR:-}"
 if [[ -z "$app_dir" ]]; then
-  app_dir="$(docker exec -u "$nc_user" -w "$nc_root" "$container" php -r 'define("OC_CONSOLE", 1); require "lib/base.php"; foreach (\OC::$server->getSystemConfig()->getValue("apps_paths", []) as $p) { if ($p["writable"] ?? false) { echo $p["path"]; exit; } } exit(1);')"
+  app_dir="$(docker exec -u "$nc_user" -w "$nc_root" "$container" php -r 'define("OC_CONSOLE", 1); require "lib/base.php"; foreach (\OCP\Server::get(\OCP\IConfig::class)->getSystemValue("apps_paths", []) as $p) { if ($p["writable"] ?? false) { echo $p["path"]; exit; } } exit(1);')"
 fi
 if [[ "$app_dir" != /* || "$nc_root" != /* ]]; then
   echo "Could not detect absolute Nextcloud paths. Set NEXTCLOUD_ROOT and NEXTCLOUD_APP_DIR." >&2
