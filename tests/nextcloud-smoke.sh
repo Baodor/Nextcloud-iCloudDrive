@@ -8,6 +8,12 @@ token="temporary-integration-token-with-at-least-48-characters"
 password="temporary-integration-password"
 cleanup() { docker rm -f "$nc" "$bridge" >/dev/null 2>&1 || true; docker network rm "$network" >/dev/null 2>&1 || true; }
 trap cleanup EXIT
+diagnostics() {
+  docker logs --tail=30 "$nc" 2>&1 || true
+  docker exec "$nc" tail -c 12000 /var/www/html/data/nextcloud.log 2>/dev/null || true
+  docker logs --tail=30 "$bridge" 2>&1 || true
+}
+trap diagnostics ERR
 docker network create "$network"
 docker build -t icloud-bridge:test worker
 key="$(docker run --rm icloud-bridge:test python3 -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())')"
@@ -39,6 +45,7 @@ bash scripts/install-nextcloud-app.sh "$nc"
 docker exec -u www-data "$nc" php occ config:app:set icloud_drive worker_url --value="http://$bridge:8080"
 docker exec -u www-data "$nc" php occ config:app:set icloud_drive worker_token --value="$token"
 docker exec -e "OC_PASS=$password" -u www-data "$nc" php occ user:add --password-from-env member
+echo "Checking member OCS state"
 docker exec "$nc" curl -fsS -u "member:$password" -H 'OCS-APIRequest: true' \
   'http://localhost/ocs/v2.php/apps/icloud_drive/api/state?format=json' > /tmp/icloud-smoke-state.json
 python3 - <<'PY'
@@ -47,11 +54,14 @@ d=json.load(open('/tmp/icloud-smoke-state.json'))['ocs']['data']
 assert d['nextcloud_user']=='member',d
 assert d['connection']['icloud_connected'] is False,d
 PY
+page_path="$(docker exec -u www-data -w /var/www/html "$nc" php -r 'define("OC_CONSOLE", 1); require "lib/base.php"; echo \OCP\Server::get(\OCP\IURLGenerator::class)->linkToRoute("icloud_drive.page.index");')"
+echo "Checking rendered page at $page_path"
 docker exec "$nc" curl -fsS -u "member:$password" \
-  'http://localhost/index.php/apps/icloud_drive/' | python3 -c 'import sys; html=sys.stdin.read(); assert "id=\"icloud-bridge\"" in html; assert "data-admin=\"false\"" in html'
+  "http://localhost$page_path" | python3 -c 'import sys; html=sys.stdin.read(); assert "id=\"icloud-bridge\"" in html; assert "data-admin=\"false\"" in html'
 # A normal member must not read administrator-only configuration.
 code="$(docker exec "$nc" curl -s -o /dev/null -w '%{http_code}' -u "member:$password" -H 'OCS-APIRequest: true' 'http://localhost/ocs/v2.php/apps/icloud_drive/api/admin?format=json')"
 [[ "$code" == 403 ]]
+echo "Connecting member Nextcloud WebDAV"
 docker exec "$nc" curl -fsS -u "member:$password" -H 'OCS-APIRequest: true' -H 'Content-Type: application/json' \
   -d "{\"payload\":{\"username\":\"member\",\"password\":\"$password\"}}" \
   'http://localhost/ocs/v2.php/apps/icloud_drive/api/connect/nextcloud?format=json' > /tmp/icloud-smoke-connect.json
