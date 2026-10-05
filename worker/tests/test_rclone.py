@@ -5,6 +5,7 @@ import tempfile
 import time
 import unittest
 import base64
+import os
 import threading
 from types import SimpleNamespace
 from http.server import ThreadingHTTPServer
@@ -78,7 +79,9 @@ class RcloneIntegration(unittest.TestCase):
     def test_bisync_initialization_then_change_and_deletion(self):
         a, b, work = self.root / "a", self.root / "b", self.root / "state"
         a.mkdir(); b.mkdir(); work.mkdir()
-        for folder in (a, b): (folder / MARKER).write_text("check")
+        marker = self.root / "marker.txt"
+        marker.write_text("check")
+        for folder in (a, b): shutil.copy2(marker, folder / MARKER)
         (a / "test.txt").write_text("source")
         (work / "filters.txt").write_text("+ " + MARKER + "\n")
         job = {**validate_job({"icloud_path":"a","nextcloud_path":"b","backup":False}),"id":"job","initialized":False}
@@ -97,3 +100,36 @@ class RcloneIntegration(unittest.TestCase):
         cmd,args,opts=make_command(job,refs,work,"run3","run")
         self.wait(self.rc.start_transfer(cmd,args,opts))
         self.assertFalse((b / "test.txt").exists())
+    def test_bisync_conflicts_and_archived_deletions(self):
+        a, b, work = self.root / "a", self.root / "b", self.root / "state"
+        work.mkdir()
+        for folder in (a, b): (folder / "Documents").mkdir(parents=True)
+        marker = self.root / "marker.txt"
+        marker.write_text("check")
+        for folder in (a, b): shutil.copy2(marker, folder / "Documents" / MARKER)
+        (a / "Documents" / "conflict.txt").write_text("initial cloud")
+        (a / "Documents" / "delete.txt").write_text("keep in backup")
+        (work / "filters.txt").write_text("+ " + MARKER + "\n")
+        job = {**validate_job({"icloud_path":"Documents","nextcloud_path":"Documents","max_delete_percent":50}),"id":"job","initialized":False}
+        refs = {"icloud":str(a / "Documents"),"nextcloud":str(b / "Documents"),"icloud_root":str(a)+"/","nextcloud_root":str(b)+"/"}
+        cmd,args,opts=make_command(job,refs,work,"initial","initialize")
+        self.wait(self.rc.start_transfer(cmd,args,opts))
+        job["initialized"] = True
+        stamp = time.time() + 10
+        for folder, content, offset in ((a, "edited in iCloud", 0), (b, "edited in Nextcloud too", 10)):
+            file = folder / "Documents" / "conflict.txt"
+            file.write_text(content)
+            os.utime(file, (stamp + offset, stamp + offset))
+        cmd,args,opts=make_command(job,refs,work,"conflict","run")
+        self.wait(self.rc.start_transfer(cmd,args,opts))
+        for folder in (a, b):
+            versions = {p.read_text() for p in (folder / "Documents").iterdir() if p.is_file()}
+            self.assertIn("edited in iCloud", versions)
+            self.assertIn("edited in Nextcloud too", versions)
+        (a / "Documents" / "delete.txt").unlink()
+        cmd,args,opts=make_command(job,refs,work,"deletion","run")
+        self.wait(self.rc.start_transfer(cmd,args,opts))
+        self.assertFalse((b / "Documents" / "delete.txt").exists())
+        backups = list((b / "iCloud Bridge Backups" / "job" / "deletion").rglob("delete.txt"))
+        self.assertEqual(len(backups), 1)
+        self.assertEqual(backups[0].read_text(), "keep in backup")
