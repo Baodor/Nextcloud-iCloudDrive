@@ -254,6 +254,16 @@ Preparation needs temporary worker disk space for the largest complete package, 
 
 Automated tests verify byte-preserving package copies, backups, previews, cancellation/recovery and both sync directions using real Nextcloud WebDAV and rclone. They do not sign into Apple or open the generated documents in Apple's apps; account-specific iCloud handling and opening documents in Pages/Numbers/Keynote still require installation testing.
 
+The run log now begins with `iWork package preflight`: it records whether package handling is enabled, the scanned entry count, discovered packages and documents that need preparation. Package ancestors are also detected from their contained file paths, and the cloud type comes from an actual parent-folder listing. After preparation, the worker checks that rclone sees the new Nextcloud documents as files before starting the transfer. A disabled setting with a known package/file mismatch fails immediately with the affected path, rather than entering a failing bisync run.
+
+If a deployed job still tries to create these documents as directories, update/recreate the worker and app, then run:
+
+```bash
+bash scripts/enable-iwork.sh JOB_ID NEXTCLOUD_CONTAINER
+```
+
+The helper compares the running worker's iWork source hash with your checkout, checks its API capability, enables package handling for that one existing job and removes only the six previous generic iWork workaround exclusions. Other filters remain. With the optional Nextcloud container argument it also checks the bridge URL configured in Nextcloud, catching a connection to an older worker. If settings change, review a fresh preview and initialize the two-way job again. For a named worker container outside Compose, set `BRIDGE_CONTAINER`; for another Compose service, set `BRIDGE_SERVICE`.
+
 ## Conventional / non-Docker Nextcloud
 
 The PHP app also works in a conventional Nextcloud installation. Copy the app into its configured writable app directory, with its folder named exactly `icloud_drive`, and enable it as the web/PHP user:

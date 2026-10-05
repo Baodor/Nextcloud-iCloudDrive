@@ -2,6 +2,7 @@
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 import hashlib
+import json
 import tempfile
 import time
 import uuid
@@ -11,10 +12,27 @@ from .nextcloud_dav import NextcloudDAV
 
 
 SUFFIXES = (".pages", ".numbers", ".key")
+IWORK_REVISION = 2
 
 
 def glob_literal(value):
     return "".join("\\" + c if c in "\\*?[]{}" else c for c in value)
+
+
+def package_paths(entries):
+    """Include package ancestors implied by files, even without a folder row."""
+    found = set()
+    for entry in entries:
+        parts = entry["Path"].rstrip("/").split("/")
+        ancestors = parts if entry.get("IsDir") else parts[:-1]
+        for index, part in enumerate(ancestors):
+            if part.lower().endswith(SUFFIXES):
+                relative = "/".join(parts[:index + 1])
+                if any(p in {"", ".", ".."} for p in parts[:index + 1]):
+                    raise BridgeError("Invalid iWork package path.")
+                found.add(relative)
+                break  # A package's embedded documents belong to the outer package.
+    return sorted(found, key=lambda p: (p.count("/"), p))
 
 
 class CheckedReader:
@@ -32,6 +50,17 @@ class IWork:
         self.deadline = deadline or time.monotonic() + job["timeout_minutes"] * 60
         self.documents = []
         self.next_update = time.monotonic() + 2
+
+    def report(self, message, **details):
+        record = {"time": datetime.now(timezone.utc).isoformat(), "level": "info",
+                  "source": "bridge/iwork", "msg": message, **details}
+        self.run["preflight_log"] = self.run.get("preflight_log", "") + json.dumps(record, ensure_ascii=False) + "\n"
+        self.run["log"] = self.run["preflight_log"]
+        self.publish()
+
+    def problem(self, relative, message):
+        self.run["progress"]["problem"] = {"code": "file_directory_conflict", "path": relative, "iwork_package": True}
+        raise BridgeError(message + " Document: " + relative, 409)
 
     def check(self):
         current = self.engine.store.get("runs", self.uid, self.run["id"])
@@ -54,29 +83,60 @@ class IWork:
                 self.engine.store.put("runs", self.uid, self.run)
 
     def plan(self):
-        if not self.job.get("iwork_packages", True):
-            return []
-        self.publish()
+        enabled = self.job.get("iwork_packages", True)
+        self.run["preflight"] = {"iwork_revision": IWORK_REVISION, "iwork_enabled": bool(enabled), "status": "scanning"}
+        self.report("iWork package preflight started", preflight=self.run["preflight"])
         result = self.engine.rc.call("operations/list", {"fs": self.refs["nextcloud"], "remote": "",
-            "opt": {"recurse": True, "dirsOnly": True}, "_filter": {"ExcludeRule": self.job["excludes"]}})
-        for item in sorted(result.get("list", []), key=lambda x: (x["Path"].count("/"), x["Path"])):
+            "opt": {"recurse": True}, "_filter": {"ExcludeRule": self.job["excludes"]}})
+        entries = result.get("list", [])
+        candidates = package_paths(entries)
+        parents, shared_directories, conflicts = {}, [], []
+        for relative in candidates:
             self.check()
-            relative = item["Path"]
-            if not item.get("IsDir") or not relative.lower().endswith(SUFFIXES):
-                continue
-            if any(relative.startswith(parent + "/") for parent in self.documents):
-                continue
-            other = self.engine.rc.call("operations/stat", {"fs": self.refs["icloud"], "remote": relative}).get("item")
+            parent = str(PurePosixPath(relative).parent)
+            parent = "" if parent == "." else parent
+            if parent not in parents:
+                # Inspect the actual parent listing: do not rely on stat's
+                # NewObject/directory fallback when deciding package types.
+                try:
+                    listing = self.engine.rc.call("operations/list", {"fs": self.refs["icloud"], "remote": parent}).get("list", [])
+                except BridgeError as error:
+                    if not parent or "directory not found" not in str(error).lower():
+                        raise
+                    listing = []  # A new Nextcloud folder has not reached iCloud yet.
+                parents[parent] = {entry["Path"].rstrip("/").casefold(): entry for entry in listing}
+            other = parents[parent].get(relative.casefold())
             # Both sides already expose directories: rclone can copy them normally.
             if other and other.get("IsDir"):
+                shared_directories.append(relative)
                 continue
-            self.documents.append(relative)
+            if enabled:
+                self.documents.append(relative)
+            elif other:
+                conflicts.append(relative)
+        self.run["preflight"] = {"iwork_revision": IWORK_REVISION, "iwork_enabled": bool(enabled), "status": "planned",
+            "nextcloud_entries": len(entries), "packages_found": len(candidates), "packages_to_prepare": len(self.documents),
+            "packages_as_directories": len(shared_directories), "package_conflicts": len(conflicts)}
+        self.report("iWork package preflight", preflight=self.run["preflight"], documents=self.documents[:100])
+        if conflicts:
+            self.problem(conflicts[0], "Automatic iWork package handling is disabled for this job. Enable it in the folder settings before retrying.")
         if self.documents:
             self.run["iwork"] = {"planned": len(self.documents), "completed": 0,
                 "documents": self.documents[:100], "preview": self.run["action"] == "preview",
                 "backup_root": f"{BACKUPS}/iWork/{self.job['id']}/{self.run['id']}"}
             self.publish()
         return self.documents
+
+    def verify(self):
+        if not self.documents or self.run["action"] == "preview":
+            return
+        for relative in self.documents:
+            self.check()
+            item = self.engine.rc.call("operations/stat", {"fs": self.refs["nextcloud"], "remote": relative,
+                "opt": {"filesOnly": True}}).get("item")
+            if not item or item.get("IsDir"):
+                self.problem(relative, "The prepared iWork document is still missing or exposed as a directory. Synchronization was stopped before rclone started; review this document and retry.")
+        self.report("iWork package preparation verified", prepared=len(self.documents))
 
     def preview_filters(self):
         # Normal files are still dry-run by rclone. Packages have a separate plan;

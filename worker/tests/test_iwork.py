@@ -10,7 +10,7 @@ import unittest
 import zipfile
 from cryptography.fernet import Fernet
 from bridge.engine import Engine
-from bridge.iwork import IWork, recover
+from bridge.iwork import IWork, package_paths, recover
 from bridge.models import BridgeError, validate_job
 from bridge.store import Store
 from test_bridge import FakeRC
@@ -73,18 +73,28 @@ class PackageRC(FakeRC):
         super().__init__()
         self.contents = contents
         self.cloud_directory = False
+        self.omit_package_directories = False
+        self.nextcloud_stat_directory = False
+        self.cloud_parent_missing = False
 
     def call(self, endpoint, payload=None, **kwargs):
         payload = payload or {}
         if endpoint == "operations/stat":
-            return {"item": {"IsDir": True} if self.cloud_directory else {"IsDir": False}}
+            return {"item": {"IsDir": self.nextcloud_stat_directory if payload.get("fs", "").startswith("nextcloud_") else True}}
+        if endpoint == "operations/list" and payload.get("fs", "").startswith("icloud_"):
+            if payload.get("remote") and self.cloud_parent_missing:
+                raise BridgeError("directory not found", 502)
+            return {"list": [{"Path": "Nested/Report.pages", "IsDir": self.cloud_directory}]}
         if endpoint == "operations/list" and payload.get("opt", {}).get("recurse"):
             if payload["opt"].get("dirsOnly"):
                 return {"list": [{"Path": "Nested/Report.pages", "IsDir": True}]}
-            prefix = payload["remote"] + "/"
-            return {"list": [{"Path": path[len("Documents/"):], "IsDir": False, "Size": len(data),
+            prefix = payload["remote"] + "/" if payload["remote"] else ""
+            entries = [{"Path": path[len("Documents/"):], "IsDir": False, "Size": len(data),
                 "ModTime": "2026-10-05T10:00:00Z"} for path, data in self.contents.items()
-                if path.startswith("Documents/" + prefix)]}
+                if path.startswith("Documents/" + prefix)]
+            if not payload["remote"] and not self.omit_package_directories:
+                entries.append({"Path": "Nested/Report.pages", "IsDir": True})
+            return {"list": entries}
         return super().call(endpoint, payload, **kwargs)
 
 
@@ -247,3 +257,62 @@ class IWorkTests(unittest.TestCase):
         with self.assertRaises(BridgeError): validate_job({"icloud_path": "A", "nextcloud_path": "B", "iwork_packages": "true"})
         self.job.pop("iwork_packages")
         self.assertEqual(self.normalizer().documents, ["Nested/Report.pages"])
+
+    def test_file_ancestors_detect_packages_without_directory_rows(self):
+        self.rc.omit_package_directories = True
+        item = self.normalizer()
+        self.assertEqual(item.documents, ["Nested/Report.pages"])
+        self.assertEqual(self.run["preflight"]["packages_found"], 1)
+        self.assertEqual(self.run["preflight"]["packages_to_prepare"], 1)
+
+    def test_flat_documents_and_embedded_packages_are_not_converted_separately(self):
+        entries = [{"Path": "Ordinary.pages", "IsDir": False},
+                   {"Path": "Folder/Report.pages/Data/Embedded.numbers/Index.zip", "IsDir": False},
+                   {"Path": "Folder/Report.pages/", "IsDir": True},
+                   {"Path": "Costs.numbers/Index.zip", "IsDir": False},
+                   {"Path": "Talk.KEY/Metadata", "IsDir": True}]
+        self.assertEqual(package_paths(entries), ["Costs.numbers", "Talk.KEY", "Folder/Report.pages"])
+
+    def test_parent_listing_overrides_misleading_cloud_stat_directory(self):
+        # Fake NewObject/stat reports a directory, but the actual listing is a file.
+        self.assertTrue(self.rc.call("operations/stat", {"fs": "icloud_test:", "remote": "Nested/Report.pages"})["item"]["IsDir"])
+        self.assertEqual(self.normalizer().documents, ["Nested/Report.pages"])
+
+    def test_new_cloud_parent_folder_does_not_block_complete_package_copy(self):
+        self.rc.cloud_parent_missing = True
+        self.assertEqual(self.normalizer().documents, ["Nested/Report.pages"])
+
+    def test_disabled_package_handling_stops_conflict_before_any_transfer(self):
+        self.job["iwork_packages"] = False
+        self.store.put("jobs", "alice", self.job)
+        with patch.object(self.rc, "start_transfer", wraps=self.rc.start_transfer) as start:
+            self.engine.execute("alice", self.run)
+        start.assert_not_called()
+        saved = self.store.get("runs", "alice", self.run["id"])
+        self.assertEqual(saved["status"], "failed")
+        self.assertIn("disabled", saved["error"])
+        self.assertIn("Nested/Report.pages", saved["error"])
+        self.assertFalse(saved["preflight"]["iwork_enabled"])
+        self.assertEqual(saved["progress"]["problem"]["path"], "Nested/Report.pages")
+        self.assertIn("iWork package preflight", saved["log"])
+        self.assertEqual(self.dav.files, self.contents)
+
+    def test_verification_stops_document_still_reported_as_directory(self):
+        self.rc.nextcloud_stat_directory = True
+        self.store.put("jobs", "alice", self.job)
+        with patch("bridge.iwork.NextcloudDAV.for_user", return_value=self.dav), patch.object(self.rc, "start_transfer", wraps=self.rc.start_transfer) as start:
+            self.engine.execute("alice", self.run)
+        start.assert_not_called()
+        self.assertEqual(self.run["status"], "failed")
+        self.assertIn("before rclone started", self.run["error"])
+        self.assertEqual(self.run["progress"]["problem"]["path"], "Nested/Report.pages")
+        self.assertFalse(self.dav.stat("Documents/Nested/Report.pages")["directory"])
+
+    def test_package_preflight_log_survives_transfer_log_updates(self):
+        with patch("bridge.iwork.NextcloudDAV.for_user", return_value=self.dav):
+            self.engine.execute("alice", self.run)
+        self.assertEqual(self.run["status"], "success")
+        self.assertIn("iWork package preflight", self.run["log"])
+        self.assertIn("iWork package preparation verified", self.run["log"])
+        self.assertTrue(self.run["log"].endswith("dry run log"))
+        self.assertNotIn("preflight_log", self.engine.public_run(self.run))

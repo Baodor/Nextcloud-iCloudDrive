@@ -254,6 +254,16 @@ Die Vorbereitung benötigt temporären Worker-Speicher für das größte vollst�
 
 Automatische Tests prüfen die unveränderten Dateiinhalte, Sicherungen, Vorschau, Abbruch/Wiederherstellung und beide Abgleichrichtungen mit echtem Nextcloud-WebDAV und rclone. Sie melden sich nicht bei Apple an und öffnen die erzeugten Dokumente nicht in Apple-Apps. Kontospezifisches iCloud-Verhalten und das Öffnen in Pages/Numbers/Keynote müssen weiterhin bei der Installation geprüft werden.
 
+Das Laufprotokoll beginnt jetzt mit `iWork package preflight`. Es nennt den Zustand der Paketeinstellung, die Anzahl eingelesener Einträge, erkannte Pakete und die vorzubereitenden Dokumente. Pakete werden auch anhand der Pfade ihrer enthaltenen Dateien erkannt; der Typ in iCloud stammt aus einer tatsächlichen Auflistung des Elternordners. Nach der Vorbereitung prüft der Worker, ob rclone die neuen Nextcloud-Dokumente als Dateien sieht, bevor die Übertragung startet. Ist die Einstellung bei einem bekannten Paket-/Dateikonflikt abgeschaltet, wird sofort mit dem betroffenen Pfad abgebrochen.
+
+Versucht ein installierter Job weiterhin, diese Dokumente als Ordner anzulegen, aktualisiere/erstelle Worker und App neu und führe dann aus:
+
+```bash
+bash scripts/enable-iwork.sh JOB_ID NEXTCLOUD_CONTAINER
+```
+
+Der Helfer vergleicht den Hash des laufenden iWork-Codes mit dem Checkout, prüft die API-Funktion, aktiviert die Paketbehandlung für genau diesen vorhandenen Job und entfernt ausschließlich die sechs früheren allgemeinen iWork-Ausschlüsse. Andere Filter bleiben erhalten. Mit dem optionalen Nextcloud-Containerargument prüft er auch die in Nextcloud konfigurierte Bridge-Adresse und erkennt eine Verbindung zu einem älteren Worker. Bei geänderten Einstellungen eine neue Vorschau prüfen und den Zwei-Wege-Job erneut initialisieren. Für einen benannten Worker-Container ohne Compose `BRIDGE_CONTAINER` setzen; für einen anderen Compose-Dienst `BRIDGE_SERVICE`.
+
 ## Klassische Nextcloud ohne Docker
 
 Die PHP-App funktioniert auch in einer klassischen Installation. Kopiere sie in das konfigurierte beschreibbare App-Verzeichnis und aktiviere sie als PHP-/Webbenutzer. Ihr Ordnername muss `icloud_drive` lauten:

@@ -82,8 +82,13 @@ docker exec -i "$bridge" python3 - <<'PY'
 from pathlib import Path
 from bridge.server import read_secret
 from bridge.store import Store
+from bridge.models import validate_job
 store = Store(Path('/data'), read_secret('BRIDGE_ENCRYPTION_KEY'))
 try:
+    job = validate_job({'name': 'iWork setting migration fixture', 'icloud_path': 'Documents', 'nextcloud_path': 'Documents',
+                       'iwork_packages': False, 'excludes': ['.DS_Store', '*.pages', '*.pages/**', '*.numbers', '*.numbers/**', '*.key', '*.key/**']})
+    job.update(id='a' * 32, initialized=False, created='2026-10-05T10:00:00+00:00', updated='2026-10-05T10:00:00+00:00')
+    store.put('jobs', 'member', job)
     store.put('runs', 'member', {
         'id': 'b' * 32, 'uid': 'member', 'job_id': 'a' * 32,
         'job_name': 'Queued cancellation fixture', 'action': 'preview',
@@ -97,6 +102,11 @@ docker exec "$nc" curl -fsS -u "member:$password" -H 'OCS-APIRequest: true' -H '
   -d '{"payload":{}}' \
   'http://localhost/ocs/v2.php/apps/icloud_drive/api/runs/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/stop?format=json' \
   | python3 -c 'import json,sys; run=json.load(sys.stdin)["ocs"]["data"]; assert run["status"] == "stopped",run; assert run["finished"],run'
+echo "Checking deployed iWork handler and migration of one job"
+BRIDGE_CONTAINER="$bridge" bash scripts/enable-iwork.sh aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa "$nc"
+docker exec "$nc" curl -fsS -u "member:$password" -H 'OCS-APIRequest: true' \
+  'http://localhost/ocs/v2.php/apps/icloud_drive/api/state?format=json' \
+  | python3 -c 'import json,sys; state=json.load(sys.stdin)["ocs"]["data"]; assert state["capabilities"]["iwork_packages"] == 2,state; job=state["jobs"][0]; assert job["iwork_packages"] and job["excludes"] == [".DS_Store"] and job["initialized"] is False and job["enabled"] is False,job'
 echo "Checking complete iWork documents with real Nextcloud WebDAV and rclone"
 docker run --rm --network "$network" -e "NEXTCLOUD_URL=http://$nc" \
   -e TEST_NC_USER=member -e "TEST_NC_PASSWORD=$password" \

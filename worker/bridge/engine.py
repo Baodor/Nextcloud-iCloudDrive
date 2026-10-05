@@ -12,7 +12,7 @@ import uuid
 from .models import BridgeError, MARKER, tenant, path, overlap, validate_job, next_due, make_command
 from .rclone import redact
 from .progress import finish_progress
-from .iwork import IWork, recover as recover_iwork
+from .iwork import IWork, IWORK_REVISION, recover as recover_iwork
 
 
 def now():
@@ -31,6 +31,7 @@ class Engine:
         self.active = None
         self.transfer = None
         self.dav = None
+        self.capabilities = {"iwork_packages": IWORK_REVISION}
         self.version = rc.call("core/version").get("version", "unknown")
         # An interrupted process cannot prove its last changes: pause and retain checkpoints.
         for run in store.records("runs"):
@@ -88,11 +89,11 @@ class Engine:
         runs = sorted(self.store.records("runs", uid), key=lambda r: r["started"], reverse=True)
         return {"connection": public, "jobs": self.store.records("jobs", uid),
                 "runs": [self.public_run(r) for r in runs[:30]], "rclone_version": self.version,
-                "nextcloud_user": uid, "version": "0.1.0"}
+                "nextcloud_user": uid, "version": "0.1.0", "capabilities": self.capabilities}
 
     @staticmethod
     def public_run(run):
-        return {k: v for k, v in run.items() if k not in {"uid", "rc_job", "group"}}
+        return {k: v for k, v in run.items() if k not in {"uid", "rc_job", "group", "preflight_log"}}
 
     def auth_result(self, uid, result, public, secret):
         result = result.get("result", result)
@@ -268,6 +269,7 @@ class Engine:
         iwork = IWork(self, uid, job, run, refs, deadline)
         iwork.plan()
         iwork.normalize()
+        iwork.verify()
         base = self.root / "state" / job["id"]
         if run["action"] == "preview":
             work = self.root / "previews" / run["id"]
@@ -316,7 +318,7 @@ class Engine:
                     transfer.cancel()
                     run["cancel_requested"] = True
                 code = transfer.poll()
-                run["log"] = transfer.log()
+                run["log"] = run.get("preflight_log", "") + transfer.log()
                 stats = transfer.stats()
                 if stats:
                     run["stats"] = stats

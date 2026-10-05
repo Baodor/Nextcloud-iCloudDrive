@@ -76,7 +76,7 @@ def handler_class(engine, token):
                 parsed = urlsplit(self.path)
                 if parsed.path == "/health" and self.command in {"GET", "HEAD"}:
                     healthy = engine.rc.process.poll() is None
-                    return self.send_json({"status": "ok" if healthy else "unavailable"}, 200 if healthy else 503)
+                    return self.send_json({"status": "ok" if healthy else "unavailable", "capabilities": engine.capabilities}, 200 if healthy else 503)
                 if parsed.path.startswith("/dav/"):
                     return engine.dav.proxy(self)
                 if not secrets.compare_digest(self.headers.get("Authorization", ""), "Bearer " + token):
