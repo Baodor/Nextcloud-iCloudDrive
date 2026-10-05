@@ -46,7 +46,8 @@ docker exec -u www-data "$nc" php occ config:app:set icloud_drive worker_url --v
 docker exec -u www-data "$nc" php occ config:app:set icloud_drive worker_token --value="$token"
 docker exec -e "OC_PASS=$password" -u www-data "$nc" php occ user:add --password-from-env member
 echo "Checking member OCS state"
-docker exec "$nc" curl -fsS -u "member:$password" -H 'OCS-APIRequest: true' \
+# Recent Nextcloud releases briefly retain pre-installation appconfig in APCu.
+docker exec "$nc" curl --retry 5 --retry-all-errors --retry-delay 1 -fsS -u "member:$password" -H 'OCS-APIRequest: true' \
   'http://localhost/ocs/v2.php/apps/icloud_drive/api/state?format=json' > /tmp/icloud-smoke-state.json
 python3 - <<'PY'
 import json
@@ -54,10 +55,9 @@ d=json.load(open('/tmp/icloud-smoke-state.json'))['ocs']['data']
 assert d['nextcloud_user']=='member',d
 assert d['connection']['icloud_connected'] is False,d
 PY
-page_path="$(docker exec -u www-data -w /var/www/html "$nc" php -r 'define("OC_CONSOLE", 1); require "lib/base.php"; echo \OCP\Server::get(\OCP\IURLGenerator::class)->linkToRoute("icloud_drive.page.index");')"
-echo "Checking rendered page at $page_path"
+echo "Checking rendered member page"
 docker exec "$nc" curl -fsS -u "member:$password" \
-  "http://localhost$page_path" | python3 -c 'import sys; html=sys.stdin.read(); assert "id=\"icloud-bridge\"" in html; assert "data-admin=\"false\"" in html'
+  'http://localhost/index.php/apps/icloud_drive/' | python3 -c 'import sys; html=sys.stdin.read(); assert "id=\"icloud-bridge\"" in html; assert "data-admin=\"false\"" in html'
 # A normal member must not read administrator-only configuration.
 code="$(docker exec "$nc" curl -s -o /dev/null -w '%{http_code}' -u "member:$password" -H 'OCS-APIRequest: true' 'http://localhost/ocs/v2.php/apps/icloud_drive/api/admin?format=json')"
 [[ "$code" == 403 ]]
