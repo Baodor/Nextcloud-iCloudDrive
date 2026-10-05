@@ -95,6 +95,10 @@ class NextcloudDAV:
     def move(self, source, destination, etag=None, directory=False):
         headers = {"Destination": self.url(destination + ("/" if directory else "")), "Overwrite": "F"}
         if etag:
-            headers["If-Match"] = etag
+            # Sabre only evaluates exact HTTP If-Match ETags for IFile nodes,
+            # even though Nextcloud exposes directory ETags in PROPFIND.
+            # Directory moves keep an existence condition; the caller checks
+            # the preserved package version again after moving it to backup.
+            headers["If-Match"] = "*" if directory else etag
         with self.request("MOVE", source + ("/" if directory else ""), headers=headers):
             pass

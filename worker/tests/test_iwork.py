@@ -190,6 +190,22 @@ class IWorkTests(unittest.TestCase):
                 item.pack(self.dav, "Documents/Nested/Report.pages", entries, self.root / "copy.zip", "Nested/Report.pages")
         self.assertEqual(self.dav.moves, []); self.assertEqual(self.dav.writes, [])
 
+    def test_change_during_directory_move_restores_latest_original(self):
+        item = self.normalizer()
+        original_move = self.dav.move
+        updated = b"a concurrent change that must never be replaced by the earlier copy"
+        def move(source, destination, *args, **kwargs):
+            original_move(source, destination, *args, **kwargs)
+            if source == "Documents/Nested/Report.pages":
+                self.dav.files[destination + "/Index.zip"] = updated
+                self.dav.revision = '"changed-during-move"'
+        with patch("bridge.iwork.NextcloudDAV.for_user", return_value=self.dav), patch.object(self.dav, "move", side_effect=move), self.assertRaises(BridgeError):
+            item.normalize()
+        self.assertTrue(self.dav.stat("Documents/Nested/Report.pages")["directory"])
+        self.assertEqual(self.dav.files["Documents/Nested/Report.pages/Index.zip"], updated)
+        self.assertEqual(self.run["iwork"]["completed"], 0)
+        self.assertNotIn("pending", self.run["iwork"])
+
     def test_restart_recovers_interrupted_directory_rename(self):
         item = self.normalizer()
         original = "Documents/Nested/Report.pages"

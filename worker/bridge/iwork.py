@@ -31,16 +31,24 @@ class IWork:
         self.engine, self.uid, self.job, self.run, self.refs = engine, uid, job, run, refs
         self.deadline = deadline or time.monotonic() + job["timeout_minutes"] * 60
         self.documents = []
+        self.next_update = time.monotonic() + 2
 
     def check(self):
         current = self.engine.store.get("runs", self.uid, self.run["id"])
         if not current or current.get("cancel_requested") or self.engine.stop_event.is_set() or time.monotonic() > self.deadline:
             self.run["cancel_requested"] = True
             raise BridgeError("Run stopped while preparing complete iWork documents.", 409)
+        if self.run.get("progress", {}).get("phase") == "iwork" and time.monotonic() >= self.next_update:
+            self.run["progress"]["updated"] = datetime.now(timezone.utc).isoformat()
+            with self.engine.lock:
+                if self.engine.store.get("runs", self.uid, self.run["id"]):
+                    self.engine.store.put("runs", self.uid, self.run)
+            self.next_update = time.monotonic() + 2
 
     def publish(self):
         self.check()
         self.run["progress"] = {"phase": "iwork", "percent": None, "updated": datetime.now(timezone.utc).isoformat()}
+        self.next_update = time.monotonic() + 2
         with self.engine.lock:
             if self.engine.store.get("runs", self.uid, self.run["id"]):
                 self.engine.store.put("runs", self.uid, self.run)
@@ -112,6 +120,9 @@ class IWork:
                     headers["X-OC-Mtime"] = str(source["mtime"])
                 with archive.open("rb") as file, client.request("PUT", staged, CheckedReader(file, self.check), headers):
                     pass
+                staged_source = client.stat(staged)
+                if not staged_source or staged_source["directory"] or not staged_source["etag"]:
+                    raise BridgeError("The temporary iWork document is unavailable. The original is unchanged.", 409)
                 uploaded = hashlib.sha256()
                 with client.request("GET", staged) as response:
                     for chunk in iter(lambda: response.read(1048576), b""):
@@ -126,7 +137,9 @@ class IWork:
                     self.engine.store.put("runs", self.uid, self.run)
                     try:
                         client.move(original, backup, source["etag"], directory=True)
-                        client.move(staged, original)
+                        if (client.stat(backup) or {}).get("etag") != source["etag"]:
+                            raise BridgeError("The iWork package changed before backup. Its current version will be restored; retry this run.", 409)
+                        client.move(staged, original, staged_source["etag"])
                     except Exception:
                         recover(self.engine, self.uid, self.run, client)
                         raise
