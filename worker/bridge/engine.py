@@ -11,6 +11,7 @@ import time
 import uuid
 from .models import BridgeError, MARKER, tenant, path, overlap, validate_job, next_due, make_command
 from .rclone import redact
+from .progress import finish_progress
 
 
 def now():
@@ -34,6 +35,7 @@ class Engine:
         for run in store.records("runs"):
             if run["status"] in {"running", "queued"}:
                 run.update(status="interrupted", finished=now(), error="Worker restarted during this run. Review and initialize again if required.")
+                finish_progress(run)
                 store.put("runs", run["uid"], run)
                 job = store.get("jobs", run["uid"], run["job_id"])
                 if job:
@@ -231,7 +233,8 @@ class Engine:
             if not public.get("icloud_connected") or not public.get("nextcloud_connected"):
                 raise BridgeError("Connect both accounts before synchronizing.", 409)
             run = {"id": uuid.uuid4().hex, "uid": uid, "job_id": identifier, "job_name": job["name"],
-                   "action": action, "status": "queued", "started": now(), "finished": None, "log": "", "stats": {}}
+                   "action": action, "status": "queued", "started": now(), "finished": None, "log": "", "stats": {},
+                   "progress": {"phase": "queued", "percent": None}}
             self.store.put("runs", uid, run)
             self.transfers.put((uid, run["id"]))
             return self.public_run(run)
@@ -240,6 +243,8 @@ class Engine:
         refs = self.refs(uid, job)
         # Always list real, unfiltered roots before writing or interpreting deletions.
         for side in ("icloud", "nextcloud"):
+            run["progress"].update(phase="preparing", side=side)
+            self.store.put("runs", uid, run)
             self.rc.call("operations/list", {"fs": refs[side], "remote": ""})
         base = self.root / "state" / job["id"]
         if run["action"] == "preview":
@@ -267,7 +272,7 @@ class Engine:
         job = self.store.get("jobs", uid, run["job_id"])
         if not job:
             return
-        run.update(status="running")
+        run.update(status="running", actual_started=now(), progress={"phase": "preparing", "percent": None})
         self.active = run["id"]
         self.store.put("runs", uid, run)
         work = None
@@ -289,14 +294,18 @@ class Engine:
                     run["cancel_requested"] = True
                 code = transfer.poll()
                 run["log"] = transfer.log()
+                stats = transfer.stats()
+                if stats:
+                    run["stats"] = stats
+                run["progress"] = transfer.progress()
+                if not run["progress"].get("direction") and job["mode"] != "bisync":
+                    run["progress"]["direction"] = "icloud_to_nextcloud" if job["mode"] == "download" else "nextcloud_to_icloud"
                 if code is not None:
                     if run.get("cancel_requested"):
                         raise BridgeError("Run stopped. Review the folders before restarting.", 409)
                     if code:
                         raise BridgeError(f"rclone exited with code {code}. Inspect the run log for details.", 502)
                     break
-                stats = transfer.stats()
-                run["stats"] = {k: stats.get(k) for k in ("bytes", "totalBytes", "speed", "transfers", "totalTransfers", "errors", "eta")}
                 with self.lock:
                     if self.store.get("runs", uid, run["id"]):
                         self.store.put("runs", uid, run)
@@ -315,6 +324,7 @@ class Engine:
                     job["initialized"] = False
         finally:
             run["finished"] = now()
+            finish_progress(run)
             job["next_run"] = next_due(job)
             with self.lock:
                 if self.store.get("jobs", uid, job["id"]):
@@ -362,6 +372,7 @@ class Engine:
                 raise BridgeError("Run not found.", 404)
             if run["status"] == "queued":
                 run.update(status="stopped", finished=now())
+                finish_progress(run)
             elif run["status"] == "running":
                 run["cancel_requested"] = True
             self.store.put("runs", uid, run)

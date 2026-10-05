@@ -131,7 +131,8 @@ def make_command(job, refs, workdir, run_id, action):
     preview = action == "preview"
     initialize = action == "initialize" or (preview and not job.get("initialized"))
     opts = {"log-level": "INFO", "use-json-log": "true", "transfers": str(job["transfers"]),
-            "checkers": str(job["checkers"]), "retries": str(job["retries"]), "timeout": "2m"}
+            "checkers": str(job["checkers"]), "retries": str(job["retries"]), "timeout": "2m",
+            "check-first": "true"}
     if preview:
         opts["dry-run"] = "true"
     if job["bandwidth"]:

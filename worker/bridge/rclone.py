@@ -11,6 +11,7 @@ import time
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen, build_opener, ProxyHandler
 from .models import BridgeError
+from .progress import Progress
 
 
 def redact(text, secrets=()):
@@ -98,6 +99,7 @@ class Transfer:
         self.size = 0
         self.lock = threading.Lock()
         self.cancelled_at = None
+        self.telemetry = Progress(command)
         flags = [f"--{k}={v}" for k, v in options.items()]
         flags += ["--rc=true", f"--rc-addr=127.0.0.1:{self.port}", "--stats=2s", "--stats-log-level=NOTICE"]
         self.process = subprocess.Popen(["rclone", command, *args, *flags], env=rc.env,
@@ -107,8 +109,14 @@ class Transfer:
 
     def drain(self):
         for line in self.process.stdout:
+            try:
+                record = json.loads(line)
+            except (ValueError, TypeError):
+                record = None
             line = redact(line)
             with self.lock:
+                if isinstance(record, dict):
+                    self.telemetry.observe(record, redact)
                 self.lines.append(line)
                 self.size += len(line)
                 while self.size > 100000 and len(self.lines) > 1:
@@ -147,6 +155,16 @@ class Transfer:
             request = Request(f"http://127.0.0.1:{self.port}/core/stats", data=b"{}",
                               headers={"Authorization": self.rc.auth, "Content-Type": "application/json"})
             with self.rc.opener.open(request, timeout=1) as response:
-                return json.load(response)
+                data = json.load(response)
+            with self.lock:
+                self.telemetry.update_stats(data, redact)
         except (OSError, URLError, ValueError):
-            return {}
+            pass
+        # Keep the last sample during RC timeouts and after exit; final JSON stats
+        # come from the log reader even when the RC HTTP server has already gone.
+        with self.lock:
+            return {**self.telemetry.stats}
+
+    def progress(self):
+        with self.lock:
+            return self.telemetry.snapshot()

@@ -83,6 +83,11 @@ class RcloneIntegration(unittest.TestCase):
                 time.sleep(.1)
             else:
                 self.fail("The real rclone transfer did not start")
+            self.assertEqual(active["progress"]["phase"], "transferring")
+            self.assertGreater(active["progress"]["percent"], 0)
+            self.assertLess(active["progress"]["percent"], 100)
+            self.assertEqual(active["stats"]["totalBytes"], 1048576)
+            self.assertTrue(active["stats"]["transferring"])
             process = engine.transfer.process
             with self.assertRaises(HTTPError) as error:
                 request("runs/" + run["id"] + "/stop", {}, "bob")
@@ -98,6 +103,8 @@ class RcloneIntegration(unittest.TestCase):
                 time.sleep(.1)
             self.assertEqual(stopped["status"], "stopped", stopped.get("error"))
             self.assertIsNotNone(stopped["finished"])
+            self.assertEqual(stopped["progress"]["phase"], "stopped")
+            self.assertIsNone(stopped["progress"]["percent"])
             self.assertIsNotNone(process.poll())
             self.assertEqual((source / "large.bin").stat().st_size, 1048576)
             self.assertEqual((destination / "existing.txt").read_text(), "keep this file")
@@ -108,6 +115,51 @@ class RcloneIntegration(unittest.TestCase):
             engine.runner_thread.join(timeout=5)
             server.shutdown(); server.server_close()
             store.db.close()
+    def test_completed_and_unchanged_runs_retain_final_progress(self):
+        source, destination = self.root / "progress-source", self.root / "progress-destination"
+        source.mkdir(); destination.mkdir()
+        (source / "file.bin").write_bytes(b"x" * 65536)
+        store = Store(self.root, Fernet.generate_key().decode())
+        store.save_user("alice", {"icloud_connected": True, "nextcloud_connected": True}, {})
+        engine = Engine(store, self.rc, self.root, "https://cloud.example.invalid")
+        engine.refs = lambda uid, job: {"icloud": str(source), "nextcloud": str(destination),
+                                       "icloud_root": str(source) + "/", "nextcloud_root": str(destination) + "/"}
+        job = engine.save_job("alice", {"icloud_path": "Source", "nextcloud_path": "Destination", "mode": "download", "backup": False})
+        try:
+            for expected_bytes in (65536, 0):
+                run = engine.queue_run("alice", job["id"])
+                engine.execute("alice", store.get("runs", "alice", run["id"]))
+                completed = store.get("runs", "alice", run["id"])
+                self.assertEqual(completed["status"], "success", completed.get("error"))
+                self.assertEqual(completed["progress"]["percent"], 100)
+                self.assertEqual(completed["progress"]["phase"], "success")
+                self.assertEqual(completed["stats"]["bytes"], expected_bytes)
+                self.assertEqual(completed["stats"]["transferring"], [])
+                self.assertIsNone(completed["stats"]["eta"])
+            self.assertEqual((destination / "file.bin").read_bytes(), (source / "file.bin").read_bytes())
+        finally:
+            store.db.close()
+    def test_iwork_exclusions_preserve_file_directory_conflicts(self):
+        source, destination, work = self.root / "packages-source", self.root / "packages-destination", self.root / "packages-work"
+        source.mkdir(); destination.mkdir(); work.mkdir()
+        (source / "Report.key").mkdir()
+        (source / "Report.key" / "image.png").write_text("package content")
+        (destination / "Report.key").write_text("original iCloud file")
+        (source / "Report.pages").write_text("source document")
+        (destination / "Report.pages").mkdir()
+        (destination / "Report.pages" / "original.txt").write_text("existing directory")
+        (source / "ordinary.txt").write_text("copy this file")
+        excludes = ["*.pages", "*.pages/**", "*.numbers", "*.numbers/**", "*.key", "*.key/**"]
+        (work / "filters.txt").write_text("".join("- " + pattern + "\n" for pattern in excludes))
+        job = {**validate_job({"icloud_path": "Documents", "nextcloud_path": "Documents", "mode": "upload", "backup": False, "excludes": excludes}), "id": "job"}
+        refs = {"icloud": str(destination), "nextcloud": str(source), "icloud_root": "unused:", "nextcloud_root": "unused:"}
+        cmd, args, opts = make_command(job, refs, work, "packages", "run")
+        self.wait(self.rc.start_transfer(cmd, args, opts))
+        self.assertEqual((destination / "ordinary.txt").read_text(), "copy this file")
+        self.assertEqual((destination / "Report.key").read_text(), "original iCloud file")
+        self.assertEqual((source / "Report.key" / "image.png").read_text(), "package content")
+        self.assertEqual((destination / "Report.pages" / "original.txt").read_text(), "existing directory")
+        self.assertEqual((source / "Report.pages").read_text(), "source document")
     def test_readonly_webdav_gateway_with_real_rclone(self):
         source = self.root / "dav-source"
         source.mkdir()

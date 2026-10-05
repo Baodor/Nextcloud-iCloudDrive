@@ -224,6 +224,33 @@ Archives live on the relevant storage and are outside the synchronized tree. The
 
 Stopping a job sends SIGINT to its transfer process, allowing rclone to finish checkpoint cleanup. The UI shows **Stopping…** and disables the **Stop requested** button until the run becomes **Stopped**. A process that does not stop within 90 seconds is terminated. Restarting the worker marks unfinished runs interrupted and pauses affected jobs. Existing checkpoints remain. Review logs and files before a fresh preview/initialization. Never schedule `--resync` on every run.
 
+## Progress and run status
+
+Activity and active folder cards distinguish **checking access → reading folders → comparing → transferring → validating/saving state**. During folder scanning, the total amount of work is not known; the animated bar shows activity without inventing a percentage. Once rclone has completed the checks, the UI shows the measured percentage of the **known transfer queue**, with byte/file counts, direction, individual active files, speed and queue ETA. Bisync may open another queue for the opposite direction, so this percentage is not an estimate of the duration or work of every remaining phase. A queue that has finished switches to a finishing state; **100% for the entire run appears only after the process exits successfully**, including an unchanged folder with nothing to copy.
+
+Previews label byte/file counts as planned and never show them as actual network throughput. Final statistics remain in history even after rclone's control server exits. Temporary statistics failures retain the last sample and show when it becomes stale. Active runs refresh every two seconds without overlapping polling requests; idle views refresh every five seconds. Red status means a failed/interrupted run; reported errors during a still-running retry are warnings.
+
+The Details dialog updates progress and logs live too. It follows new log output when you are at the bottom and preserves your reading position when you scroll upward.
+
+The worker uses `--check-first` so each transfer queue is collected before copying. This gives a meaningful denominator and delays the start of copying until the scan finishes; rclone holds the pending queue in memory, so very large file counts can require more RAM.
+
+### File/directory conflicts and iWork packages
+
+`is a file not a directory` is a real synchronization error. The same path is treated as a file on one side and a directory on the other. This can occur when Pages/Numbers/Keynote document packages are exposed as directories on Nextcloud and files by the iCloud backend. The UI identifies the affected package. Resolve the differing representations before another initialization; the bridge does not automatically convert or remove documents.
+
+As a temporary workaround, keep the documents outside this job by adding the following **exclusion patterns**, one per line, in its folder settings (keep existing exclusions too):
+
+```text
+*.pages
+*.pages/**
+*.numbers
+*.numbers/**
+*.key
+*.key/**
+```
+
+These patterns exclude the documents themselves as well as their contents on both sides. Existing documents remain, but they will not synchronize through that job. Saving changed filters invalidates its previous preview/initialization; run a new preview, review it, then initialize again.
+
 ## Conventional / non-Docker Nextcloud
 
 The PHP app also works in a conventional Nextcloud installation. Copy the app into its configured writable app directory, with its folder named exactly `icloud_drive`, and enable it as the web/PHP user:
@@ -270,6 +297,8 @@ This stops active transfers and removes bridge credentials, mappings and run rec
 |---|---|
 | Cannot reach the bridge | Shared Docker network, `http://icloud-bridge:8080`, administrator token and container health |
 | Stop/disconnect returns `Expected a JSON object` | Update the Nextcloud app: `git pull --ff-only`, then `bash scripts/install-nextcloud-app.sh nextcloud`. Reload the browser and retry. Older app code encoded an empty request as `[]` instead of `{}`; this fix only needs an app update and can be installed while the worker continues running. |
+| Progress looks complete while the run is still active | Update both worker and app. Scanning and final validation have no known denominator; live percentages apply to the known transfer queue. The process must finish successfully before the run reaches 100%. |
+| `is a file not a directory` / failing iWork package uploads | Resolve the file/directory mismatch or temporarily exclude the affected packages on both sides using the patterns above. Inspect the completed run's errors before previewing/initializing again. A completed check count is not a successful synchronization. |
 | `ModuleNotFoundError: No module named 'bridge'` during startup | Pull the latest code and rebuild/recreate the worker: `git pull --ff-only` then `docker compose up -d --build --force-recreate --wait --wait-timeout 120`. The image normalizes source permissions and fixes the Python import path; retain your secrets and data volume. |
 | `PermissionError` for `site-packages/cryptography` during build/startup | Pull the latest code, run `docker compose build --no-cache icloud-bridge`, then `docker compose up -d --force-recreate --wait --wait-timeout 120 icloud-bridge`. The image sets the installation umask and makes installed dependencies readable by UID 10001. |
 | Secret-file permission error | Run `sudo chown -R 10001:10001 secrets`; ensure both secret files exist |

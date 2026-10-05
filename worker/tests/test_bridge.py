@@ -33,7 +33,7 @@ class FakeRC:
         return {"jobid": 1}
     def start_transfer(self, command, args, options):
         self.command(command, args, options)
-        return type("Transfer", (), {"poll": lambda self: 0, "log": lambda self: "dry run log", "stats": lambda self: {}, "cancel": lambda self: None})()
+        return type("Transfer", (), {"poll": lambda self: 0, "log": lambda self: "dry run log", "stats": lambda self: {}, "progress": lambda self: {"phase": "transferring", "percent": None}, "cancel": lambda self: None})()
 
 
 class BridgeTests(unittest.TestCase):
@@ -101,6 +101,7 @@ class BridgeTests(unittest.TestCase):
         job = self.job(mode="download")
         command, _, opts = make_command(job, self.engine.refs("alice", job), self.root, "run", "run")
         self.assertEqual(command, "copy")
+        self.assertEqual(opts["check-first"], "true")
         self.assertNotIn("max-delete", opts)
         self.assertIn("backup-dir", opts)
     def test_filter_change_invalidates_initialized_job(self):

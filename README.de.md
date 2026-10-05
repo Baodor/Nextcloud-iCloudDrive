@@ -224,6 +224,33 @@ Archive liegen auf dem jeweiligen Speicher außerhalb des ausgewählten Ordners.
 
 Stoppen sendet SIGINT an den Übertragungsprozess, damit rclone seine Zustände geordnet sichern kann. Die UI zeigt **Wird gestoppt…** und deaktiviert die Schaltfläche **Stop angefordert**, bis der Lauf **Gestoppt** ist. Ein nach 90 Sekunden weiterhin laufender Prozess wird beendet. Ein Neustart markiert offene Läufe als unterbrochen und pausiert die betroffenen Jobs; Zustände bleiben erhalten. Prüfe Dateien und Protokolle vor einer neuen Vorschau/Initialisierung. `--resync` gehört nicht in jeden wiederkehrenden Lauf.
 
+## Fortschritt und Laufstatus
+
+Aktivität und aktive Ordnerkarten unterscheiden **Zugriff prüfen → Ordner einlesen → Änderungen vergleichen → Übertragen → Zustand prüfen/speichern**. Während des Einlesens ist der Gesamtumfang unbekannt; der animierte Balken zeigt Aktivität ohne erfundene Prozentzahl. Sobald rclone die Prüfungen abgeschlossen hat, zeigt die UI den gemessenen Fortschritt der **bekannten Übertragungswarteschlange** mit Daten-/Dateimengen, Richtung, einzelnen laufenden Dateien, Geschwindigkeit und Restzeit dieser Warteschlange. Bisync kann für die Gegenrichtung eine weitere Warteschlange öffnen; die Prozentzahl schätzt daher nicht die Dauer oder den Aufwand sämtlicher verbleibenden Phasen. Eine abgearbeitete Warteschlange wechselt zum Abschlussstatus; **100 % für den gesamten Lauf erscheinen erst, wenn der Prozess erfolgreich beendet ist**, auch bei unveränderten Ordnern ohne Kopierbedarf.
+
+Vorschauen kennzeichnen Daten-/Dateimengen als geplant und zeigen keine vermeintliche Übertragungsgeschwindigkeit. Abschließende Statistiken bleiben nach dem Ende des rclone-Steuerdienstes im Verlauf erhalten. Kurze Ausfälle der Statistikabfrage behalten den letzten Messwert und zeigen an, wenn er veraltet ist. Aktive Läufe aktualisieren sich alle zwei Sekunden ohne überlappende Abfragen; inaktive Ansichten alle fünf Sekunden. Rot bedeutet fehlgeschlagen/unterbrochen; Fehler während eines weiterhin laufenden Wiederholungsversuchs erscheinen als Hinweis.
+
+Auch das Detailfenster aktualisiert Fortschritt und Protokoll live. Am unteren Ende folgt es neuen Zeilen; beim Hochscrollen bleibt deine Leseposition erhalten.
+
+Der Worker verwendet `--check-first`, damit jede Übertragungswarteschlange vor dem Kopieren ermittelt wird. Das liefert eine brauchbare Bezugsgröße und verzögert den Kopierbeginn bis zum Ende des Einlesens. rclone hält die Warteschlange im Arbeitsspeicher; sehr hohe Dateizahlen können deshalb mehr RAM benötigen.
+
+### Datei-/Ordnerkonflikte und iWork-Pakete
+
+`is a file not a directory` ist ein echter Synchronisationsfehler. Derselbe Pfad wird auf einer Seite als Datei und auf der anderen als Ordner behandelt. Das kann auftreten, wenn Pages-/Numbers-/Keynote-Dokumentpakete in Nextcloud als Ordner und vom iCloud-Backend als Dateien dargestellt werden. Die UI benennt das betroffene Paket. Vereinheitliche die Darstellungen vor einem erneuten Erstabgleich; die Bridge konvertiert oder entfernt solche Dokumente nicht automatisch.
+
+Als vorübergehende Lösung kannst du diese Dokumente vom Job ausnehmen. Ergänze in seinen Ordnereinstellungen die folgenden **Ausschlussmuster**, jeweils eine Zeile (vorhandene Ausschlüsse behalten):
+
+```text
+*.pages
+*.pages/**
+*.numbers
+*.numbers/**
+*.key
+*.key/**
+```
+
+Die Muster nehmen sowohl die Dokumente selbst als auch ihre Inhalte auf beiden Seiten aus. Vorhandene Dokumente bleiben bestehen, werden aber durch diesen Job nicht abgeglichen. Geänderte Filter machen die bisherige Vorschau/Initialisierung ungültig; danach eine neue Vorschau ausführen, prüfen und erneut initialisieren.
+
 ## Klassische Nextcloud ohne Docker
 
 Die PHP-App funktioniert auch in einer klassischen Installation. Kopiere sie in das konfigurierte beschreibbare App-Verzeichnis und aktiviere sie als PHP-/Webbenutzer. Ihr Ordnername muss `icloud_drive` lauten:
@@ -270,6 +297,8 @@ Das stoppt aktive Übertragungen und entfernt Bridge-Zugangsdaten, Zuordnungen u
 |---|---|
 | Bridge nicht erreichbar | Gemeinsames Docker-Netz, `http://icloud-bridge:8080`, Dienst-Token und Containerzustand |
 | Stoppen/Trennen meldet `Expected a JSON object` | Nextcloud-App aktualisieren: `git pull --ff-only`, danach `bash scripts/install-nextcloud-app.sh nextcloud`. Browser neu laden und erneut versuchen. Älterer App-Code übertrug eine leere Anfrage als `[]` statt `{}`; für diese Korrektur genügt ein App-Update, während der Worker weiterläuft. |
+| Fortschritt wirkt abgeschlossen, während der Lauf weiterläuft | Worker und App aktualisieren. Beim Einlesen und in der Abschlussprüfung ist der Gesamtumfang unbekannt; laufende Prozentwerte gelten für die bekannte Übertragungswarteschlange. Erst ein erfolgreich beendeter Prozess ergibt 100 % für den Lauf. |
+| `is a file not a directory` / iWork-Pakete lassen sich nicht hochladen | Datei-/Ordnerdarstellungen vereinheitlichen oder die betroffenen Pakete vorübergehend mit den obigen Mustern auf beiden Seiten ausschließen. Fehler des beendeten Laufs vor neuer Vorschau/Initialisierung prüfen. Vollständig geprüfte Dateien bedeuten keinen erfolgreichen Abgleich. |
 | `ModuleNotFoundError: No module named 'bridge'` beim Start | Aktuellen Code holen und Worker neu bauen/erstellen: `git pull --ff-only`, dann `docker compose up -d --build --force-recreate --wait --wait-timeout 120`. Das Image vereinheitlicht die Quelldateirechte und setzt den Python-Importpfad; Schlüssel und Datenvolume behalten. |
 | `PermissionError` für `site-packages/cryptography` beim Bauen/Starten | Aktuellen Code holen, `docker compose build --no-cache icloud-bridge` ausführen, danach `docker compose up -d --force-recreate --wait --wait-timeout 120 icloud-bridge`. Das Image setzt die Installations-Umask und macht installierte Abhängigkeiten für UID 10001 lesbar. |
 | Schlüsseldatei nicht lesbar | `sudo chown -R 10001:10001 secrets`; beide Dateien müssen existieren |
