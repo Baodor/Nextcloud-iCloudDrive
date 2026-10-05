@@ -259,6 +259,7 @@ This stops active transfers and removes bridge credentials, mappings and run rec
 | Problem | Check / action |
 |---|---|
 | Cannot reach the bridge | Shared Docker network, `http://icloud-bridge:8080`, administrator token and container health |
+| `ModuleNotFoundError: No module named 'bridge'` during startup | Pull the latest code and rebuild/recreate the worker: `git pull --ff-only` then `docker compose up -d --build --force-recreate --wait --wait-timeout 120`. The image normalizes source permissions and fixes the Python import path; retain your secrets and data volume. |
 | Secret-file permission error | Run `sudo chown -R 10001:10001 secrets`; ensure both secret files exist |
 | Worker cannot decrypt config | Restore the original encryption key and volume together; do not generate a replacement key |
 | Nextcloud connection gets 401/HTML | Verify login ID/app password; avoid an interactive SSO/reverse-proxy login in front of WebDAV |
@@ -308,7 +309,10 @@ Real rclone tests are skipped when the binary is unavailable. To run them in the
 ```bash
 docker build -t icloud-bridge:test worker
 docker run --rm -v "$PWD/worker/tests:/tests:ro" icloud-bridge:test python3 -m unittest discover -s /tests -v
+bash tests/docker-smoke.sh
 ```
+
+The Docker smoke test requires Docker Compose and passwordless sudo (or root) to assign temporary secret files to UID 10001. It uses an isolated project, network and data volume, starts the default worker command with the production Compose restrictions, and checks health and API authentication. CI builds its worker image from source directories with mode 0700 and files with mode 0600 to cover private checkouts.
 
 Optional browser checks use the shipped UI with fixtures; they check English/German forms, saving settings, mount details and mobile overflow. They do not authenticate to Apple:
 

@@ -259,6 +259,7 @@ Das stoppt aktive Übertragungen und entfernt Bridge-Zugangsdaten, Zuordnungen u
 | Problem | Prüfen / beheben |
 |---|---|
 | Bridge nicht erreichbar | Gemeinsames Docker-Netz, `http://icloud-bridge:8080`, Dienst-Token und Containerzustand |
+| `ModuleNotFoundError: No module named 'bridge'` beim Start | Aktuellen Code holen und Worker neu bauen/erstellen: `git pull --ff-only`, dann `docker compose up -d --build --force-recreate --wait --wait-timeout 120`. Das Image vereinheitlicht die Quelldateirechte und setzt den Python-Importpfad; Schlüssel und Datenvolume behalten. |
 | Schlüsseldatei nicht lesbar | `sudo chown -R 10001:10001 secrets`; beide Dateien müssen existieren |
 | Konfiguration nicht entschlüsselbar | Ursprünglichen Schlüssel und passendes Volume wiederherstellen; keinen Ersatzschlüssel erzeugen |
 | Nextcloud liefert 401 oder HTML | Anmelde-ID/App-Passwort prüfen; WebDAV darf nicht hinter einer interaktiven SSO-Seite hängen |
@@ -308,7 +309,10 @@ Tests mit echtem rclone werden übersprungen, wenn dessen Binärdatei fehlt. Im 
 ```bash
 docker build -t icloud-bridge:test worker
 docker run --rm -v "$PWD/worker/tests:/tests:ro" icloud-bridge:test python3 -m unittest discover -s /tests -v
+bash tests/docker-smoke.sh
 ```
+
+Der Docker-Starttest benötigt Docker Compose und passwortloses sudo (oder root), um temporäre Schlüsseldateien Benutzer 10001 zuzuweisen. Er verwendet ein eigenes Projekt, Netzwerk und Datenvolume, startet den Standardbefehl mit den produktiven Compose-Einschränkungen und prüft Zustand und API-Anmeldung. Die CI baut ihr Worker-Image aus Quellverzeichnissen mit Modus 0700 und Dateien mit Modus 0600, um restriktive Checkouts abzudecken.
 
 Optionale Browserprüfungen verwenden die echte ausgelieferte Oberfläche mit Testdaten. Geprüft werden deutsche/englische Formulare, gespeicherte Einstellungen, Einbindungsdaten und Überbreite auf Mobilgeräten; Apple wird dabei nicht angemeldet:
 

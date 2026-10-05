@@ -11,6 +11,7 @@
 - Encrypted account credentials and rclone config with separately stored keys.
 - Read-only per-user WebDAV gateway for Nextcloud External storage.
 - Docker deployment, installation/package/account-cleanup scripts and extensive English/German documentation.
+- Worker image normalizes private-checkout permissions, sets an explicit Python import path and verifies imports as UID 10001 during the build; production Compose startup is covered in CI.
 - Worker safety tests, browser checks, optional real rclone tests and a Nextcloud integration CI matrix.
 
 Apple authentication and account-specific iCloud/ADP behavior require a real-account installation test. This is an initial experimental release, not a signed Nextcloud App Store package.

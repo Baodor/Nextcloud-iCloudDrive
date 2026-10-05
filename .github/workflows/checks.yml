@@ -9,8 +9,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Build worker
-        run: docker build -t icloud-bridge:test worker
+      - name: Build worker with private checkout permissions
+        run: |
+          context="$(mktemp -d)"
+          trap 'rm -rf -- "$context"' EXIT
+          cp -R worker/. "$context/"
+          find "$context" -type d -exec chmod 700 {} +
+          find "$context" -type f -exec chmod 600 {} +
+          docker build -t icloud-bridge:test "$context"
+      - name: Smoke-test production Compose startup
+        run: bash tests/docker-smoke.sh
       - name: Unit and real rclone tests
         run: docker run --rm -v "$PWD/worker/tests:/tests:ro" icloud-bridge:test python3 -m unittest discover -s /tests -v
       - name: Lint PHP
