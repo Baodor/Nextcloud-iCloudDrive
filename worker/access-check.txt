@@ -1,0 +1,1 @@
+iCloud Drive Bridge access check. Keep this file in both synchronized folders.

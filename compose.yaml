@@ -1,0 +1,42 @@
+services:
+  icloud-bridge:
+    build: ./worker
+    image: nextcloud-icloud-bridge:0.1.0
+    restart: unless-stopped
+    init: true
+    stop_grace_period: 120s
+    environment:
+      NEXTCLOUD_URL: ${NEXTCLOUD_URL:?Set NEXTCLOUD_URL in .env}
+      BRIDGE_API_TOKEN_FILE: /run/secrets/api_token
+      BRIDGE_ENCRYPTION_KEY_FILE: /run/secrets/encryption_key
+      BRIDGE_MAX_DAV_USERS: ${BRIDGE_MAX_DAV_USERS:-20}
+      TZ: ${TZ:-Europe/Berlin}
+    secrets:
+      - api_token
+      - encryption_key
+    volumes:
+      - bridge_data:/data
+    networks:
+      - nextcloud
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+    # The API and read-only DAV gateway are internal. No public port is published.
+
+secrets:
+  api_token:
+    file: ./secrets/api_token
+  encryption_key:
+    file: ./secrets/encryption_key
+
+volumes:
+  bridge_data:
+
+networks:
+  nextcloud:
+    external: true
+    name: ${NEXTCLOUD_NETWORK:?Set NEXTCLOUD_NETWORK in .env}

@@ -1,0 +1,16 @@
+# Changelog
+
+## 0.1.0 — 2026-10-05
+
+- Native Nextcloud app with English/German UI, responsive layout and administrator-only service configuration.
+- Apple authentication challenge flow through rclone and a Nextcloud WebDAV app-password connection.
+- Per-user folder selection, Nextcloud destination-folder creation and non-overlapping job validation.
+- Daily/weekday/interval schedules, copy in either direction and explicit bisync initialization after preview.
+- Isolated dry-run checkpoints, access-check files, conservative deletion limits and retained conflict copies.
+- Persistent state, backup directories, live progress, graceful stop requests and run history.
+- Encrypted account credentials and rclone config with separately stored keys.
+- Read-only per-user WebDAV gateway for Nextcloud External storage.
+- Docker deployment, installation/package/account-cleanup scripts and extensive English/German documentation.
+- Worker safety tests, browser checks, optional real rclone tests and a Nextcloud integration CI matrix.
+
+Apple authentication and account-specific iCloud/ADP behavior require a real-account installation test. This is an initial experimental release, not a signed Nextcloud App Store package.

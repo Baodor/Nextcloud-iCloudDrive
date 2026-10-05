@@ -1,0 +1,44 @@
+name: Checks
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  worker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build worker
+        run: docker build -t icloud-bridge:test worker
+      - name: Unit and real rclone tests
+        run: docker run --rm -v "$PWD/worker/tests:/tests:ro" icloud-bridge:test python3 -m unittest discover -s /tests -v
+      - name: Lint PHP
+        run: docker run --rm -v "$PWD:/src:ro" -w /src php:8.3-cli sh -c 'set -e; for file in $(find nextcloud -name "*.php"); do php -l "$file"; done'
+      - name: Build app package
+        run: python3 scripts/package.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: icloud_drive-app
+          path: dist/icloud_drive-0.1.0.tar.gz
+  ui:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm install --ignore-scripts
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:ui
+  nextcloud:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        version: ['30', '35']
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and smoke-test Nextcloud integration
+        env:
+          NC_VERSION: ${{ matrix.version }}
+        run: bash tests/nextcloud-smoke.sh

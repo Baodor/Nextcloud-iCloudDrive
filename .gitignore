@@ -1,0 +1,12 @@
+.env
+.env.*
+!.env.example
+data/
+secrets/
+dist/
+__pycache__/
+*.pyc
+.pytest_cache/
+node_modules/
+test-results/
+*.log

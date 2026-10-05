@@ -1,0 +1,28 @@
+<?xml version="1.0"?>
+<info xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="https://apps.nextcloud.com/schema/apps/info.xsd">
+  <id>icloud_drive</id>
+  <name>iCloud Drive Bridge</name>
+  <summary>Browse iCloud Drive and synchronize selected folders with Nextcloud.</summary>
+  <description>A Nextcloud interface for an isolated rclone worker: Apple login, folder selection, daily or interval synchronization, conflict copies, previews, backup directories and run history. Requires the companion Docker service. Experimental iCloud backend; not affiliated with Apple.</description>
+  <version>0.1.0</version>
+  <licence>AGPL-3.0-or-later</licence>
+  <author>Baodor</author>
+  <namespace>ICloudDrive</namespace>
+  <category>files</category>
+  <category>integration</category>
+  <website>https://github.com/Baodor/Nextcloud-iCloudDrive</website>
+  <bugs>https://github.com/Baodor/Nextcloud-iCloudDrive/issues</bugs>
+  <repository type="git">https://github.com/Baodor/Nextcloud-iCloudDrive.git</repository>
+  <dependencies>
+    <php min-version="8.1"/>
+    <nextcloud min-version="30" max-version="35"/>
+  </dependencies>
+  <navigations>
+    <navigation>
+      <name>iCloud Drive</name>
+      <route>icloud_drive.page.index</route>
+      <order>25</order>
+      <icon>app.svg</icon>
+    </navigation>
+  </navigations>
+</info>

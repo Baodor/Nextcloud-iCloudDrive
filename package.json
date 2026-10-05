@@ -1,0 +1,7 @@
+{
+  "name": "nextcloud-icloud-drive-bridge",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": { "test:ui": "node tests/ui.cjs" },
+  "devDependencies": { "playwright": "1.62.1" }
+}
