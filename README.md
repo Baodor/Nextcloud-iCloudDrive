@@ -222,7 +222,7 @@ iCloud Bridge Backups/JOB_ID/RUN_ID/
 
 Archives live on the relevant storage and are outside the synchronized tree. They are **not automatically pruned**; review space usage and remove them manually when appropriate. They are not a substitute for an independent server backup or iCloud recovery.
 
-Stopping a job sends SIGINT to its transfer process, allowing rclone to finish checkpoint cleanup. A process that does not stop within 90 seconds is terminated. Restarting the worker marks unfinished runs interrupted and pauses affected jobs. Existing checkpoints remain. Review logs and files before a fresh preview/initialization. Never schedule `--resync` on every run.
+Stopping a job sends SIGINT to its transfer process, allowing rclone to finish checkpoint cleanup. The UI shows **Stopping…** and disables the **Stop requested** button until the run becomes **Stopped**. A process that does not stop within 90 seconds is terminated. Restarting the worker marks unfinished runs interrupted and pauses affected jobs. Existing checkpoints remain. Review logs and files before a fresh preview/initialization. Never schedule `--resync` on every run.
 
 ## Conventional / non-Docker Nextcloud
 
@@ -269,6 +269,7 @@ This stops active transfers and removes bridge credentials, mappings and run rec
 | Problem | Check / action |
 |---|---|
 | Cannot reach the bridge | Shared Docker network, `http://icloud-bridge:8080`, administrator token and container health |
+| Stop/disconnect returns `Expected a JSON object` | Update the Nextcloud app: `git pull --ff-only`, then `bash scripts/install-nextcloud-app.sh nextcloud`. Reload the browser and retry. Older app code encoded an empty request as `[]` instead of `{}`; this fix only needs an app update and can be installed while the worker continues running. |
 | `ModuleNotFoundError: No module named 'bridge'` during startup | Pull the latest code and rebuild/recreate the worker: `git pull --ff-only` then `docker compose up -d --build --force-recreate --wait --wait-timeout 120`. The image normalizes source permissions and fixes the Python import path; retain your secrets and data volume. |
 | `PermissionError` for `site-packages/cryptography` during build/startup | Pull the latest code, run `docker compose build --no-cache icloud-bridge`, then `docker compose up -d --force-recreate --wait --wait-timeout 120 icloud-bridge`. The image sets the installation umask and makes installed dependencies readable by UID 10001. |
 | Secret-file permission error | Run `sudo chown -R 10001:10001 secrets`; ensure both secret files exist |

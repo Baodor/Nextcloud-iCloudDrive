@@ -14,6 +14,7 @@ from urllib.error import HTTPError
 from xml.etree import ElementTree
 from bridge.rclone import Rclone
 from bridge.models import MARKER, make_command, validate_job
+from bridge.engine import Engine
 from bridge.dav import Dav
 from bridge.store import Store
 from bridge.server import handler_class
@@ -46,6 +47,67 @@ class RcloneIntegration(unittest.TestCase):
         self.assertFalse((dst / "test.txt").exists())
         self.wait(self.rc.start_transfer("copy", [str(src), str(dst)], {"use-json-log": "true"}))
         self.assertEqual((dst / "test.txt").read_text(), "source")
+    def test_running_transfer_stops_via_authenticated_api(self):
+        source, destination = self.root / "stop-source", self.root / "stop-destination"
+        source.mkdir(); destination.mkdir()
+        (source / "large.bin").write_bytes(b"x" * 1048576)
+        (destination / "existing.txt").write_text("keep this file")
+        store = Store(self.root, Fernet.generate_key().decode())
+        store.save_user("alice", {"icloud_connected": True, "nextcloud_connected": True}, {})
+        engine = Engine(store, self.rc, self.root, "https://cloud.example.invalid")
+        engine.refs = lambda uid, job: {
+            "icloud": str(source), "nextcloud": str(destination),
+            "icloud_root": str(source) + "/", "nextcloud_root": str(destination) + "/",
+        }
+        job = engine.save_job("alice", {"name": "Stop test", "icloud_path": "Source", "nextcloud_path": "Destination",
+                                        "mode": "download", "bandwidth": "16k", "backup": False})
+        server = ThreadingHTTPServer(("127.0.0.1", 0), handler_class(engine, "t" * 48))
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        engine.start()
+        url = f"http://127.0.0.1:{server.server_port}/v1/"
+        def request(endpoint, body, uid="alice"):
+            import json
+            req = Request(url + endpoint, data=json.dumps(body).encode(), headers={
+                "Content-Type": "application/json", "Authorization": "Bearer " + "t" * 48,
+                "X-Bridge-User": base64.b64encode(uid.encode()).decode(),
+            })
+            with urlopen(req, timeout=5) as response:
+                return json.load(response)
+        try:
+            run = request("jobs/" + job["id"] + "/run", {"action": "run"})
+            deadline = time.monotonic() + 15
+            while time.monotonic() < deadline:
+                active = store.get("runs", "alice", run["id"])
+                if (active.get("stats") or {}).get("bytes", 0) and engine.transfer:
+                    break
+                time.sleep(.1)
+            else:
+                self.fail("The real rclone transfer did not start")
+            process = engine.transfer.process
+            with self.assertRaises(HTTPError) as error:
+                request("runs/" + run["id"] + "/stop", {}, "bob")
+            self.assertEqual(error.exception.code, 404)
+            self.assertIsNone(process.poll())
+            stopped = request("runs/" + run["id"] + "/stop", {})
+            self.assertTrue(stopped["cancel_requested"])
+            deadline = time.monotonic() + 10
+            while time.monotonic() < deadline:
+                stopped = store.get("runs", "alice", run["id"])
+                if stopped["status"] == "stopped":
+                    break
+                time.sleep(.1)
+            self.assertEqual(stopped["status"], "stopped", stopped.get("error"))
+            self.assertIsNotNone(stopped["finished"])
+            self.assertIsNotNone(process.poll())
+            self.assertEqual((source / "large.bin").stat().st_size, 1048576)
+            self.assertEqual((destination / "existing.txt").read_text(), "keep this file")
+        finally:
+            engine.stop_event.set()
+            if engine.transfer:
+                engine.transfer.finish_cancel(timeout=1)
+            engine.runner_thread.join(timeout=5)
+            server.shutdown(); server.server_close()
+            store.db.close()
     def test_readonly_webdav_gateway_with_real_rclone(self):
         source = self.root / "dav-source"
         source.mkdir()

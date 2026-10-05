@@ -76,4 +76,30 @@ python3 - <<'PY'
 import json
 assert json.load(open('/tmp/icloud-smoke-connect.json'))['ocs']['data']['connected'] is True
 PY
+echo "Checking empty-payload stop through Nextcloud OCS"
+# Seed a queued fixture without placing it in the runner's in-memory queue.
+docker exec -i "$bridge" python3 - <<'PY'
+from pathlib import Path
+from bridge.server import read_secret
+from bridge.store import Store
+store = Store(Path('/data'), read_secret('BRIDGE_ENCRYPTION_KEY'))
+try:
+    store.put('runs', 'member', {
+        'id': 'b' * 32, 'uid': 'member', 'job_id': 'a' * 32,
+        'job_name': 'Queued cancellation fixture', 'action': 'preview',
+        'status': 'queued', 'started': '2026-10-05T10:00:00+00:00',
+        'finished': None, 'stats': {}, 'log': '',
+    })
+finally:
+    store.db.close()
+PY
+docker exec "$nc" curl -fsS -u "member:$password" -H 'OCS-APIRequest: true' -H 'Content-Type: application/json' \
+  -d '{"payload":{}}' \
+  'http://localhost/ocs/v2.php/apps/icloud_drive/api/runs/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/stop?format=json' \
+  | python3 -c 'import json,sys; run=json.load(sys.stdin)["ocs"]["data"]; assert run["status"] == "stopped",run; assert run["finished"],run'
+echo "Checking empty-payload disconnect through Nextcloud OCS"
+docker exec "$nc" curl -fsS -u "member:$password" -H 'OCS-APIRequest: true' -H 'Content-Type: application/json' \
+  -d '{"payload":{}}' \
+  'http://localhost/ocs/v2.php/apps/icloud_drive/api/disconnect/nextcloud?format=json' \
+  | python3 -c 'import json,sys; assert json.load(sys.stdin)["ocs"]["data"]["disconnected"] == "nextcloud"'
 echo "Nextcloud $version integration passed"

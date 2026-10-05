@@ -25,6 +25,15 @@ const job = {id:'a'.repeat(32),name:'Documents',icloud_path:'Documents',nextclou
         else if(endpoint==='admin')data={worker_url:'http://icloud-bridge:8080',token_configured:true};
         else if(endpoint==='folders')data={path:url.searchParams.get('path')||'',folders:[{name:'Documents',path:'Documents'}]};
         else if(endpoint?.startsWith('jobs/')&&route.request().method()==='PUT'){saved=route.request().postDataJSON().payload;Object.assign(fixture.jobs[0],saved);data=fixture.jobs[0];}
+        else if(endpoint===`jobs/${job.id}/run`){
+          const run={id:'b'.repeat(32),job_id:job.id,job_name:fixture.jobs[0].name,action:route.request().postDataJSON().payload.action,status:'running',started:'2026-10-05T10:00:00Z',finished:null,stats:{bytes:1024,totalBytes:1048576,speed:1024},log:''};
+          fixture.runs=[run];data=run;
+        }
+        else if(endpoint===`runs/${'b'.repeat(32)}/stop`){
+          assert.equal(route.request().method(),'POST');
+          assert.deepEqual(route.request().postDataJSON(),{payload:{}});
+          fixture.runs[0].cancel_requested=true;data=fixture.runs[0];
+        }
         else if(endpoint==='dav')data={url:'http://icloud-bridge:8080/dav/test/',username:'test',password:'fixture-mount-password'};
         return route.fulfill({contentType:'application/json',body:JSON.stringify({ocs:{meta:{status:'ok'},data}})});
       });
@@ -52,6 +61,17 @@ const job = {id:'a'.repeat(32),name:'Documents',icloud_path:'Documents',nextclou
       await page.locator('dialog[open]').waitFor();
       assert.equal(await page.evaluate(()=>document.querySelector('dialog').getBoundingClientRect().width<=window.innerWidth),true);
       await page.keyboard.press('Escape');await page.waitForFunction(()=>!document.querySelector('dialog'));
+      await page.getByRole('button',{name:language==='de'?'Jetzt abgleichen':'Sync now',exact:true}).click();
+      await page.getByRole('button',{name:language==='de'?'Stoppen':'Stop',exact:true}).click();
+      const stopRequested=page.getByRole('button',{name:language==='de'?'Stop angefordert':'Stop requested',exact:true});
+      await stopRequested.waitFor();assert.equal(await stopRequested.isDisabled(),true);
+      assert.equal(await page.locator('.ib-run-row .ib-badge').textContent(),language==='de'?'Wird gestoppt…':'Stopping…');
+      fixture.runs[0].status='stopped';fixture.runs[0].finished='2026-10-05T10:01:00Z';
+      await page.reload();
+      await page.getByRole('button',{name:language==='de'?'Aktivität':'Activity',exact:true}).click();
+      await page.locator('.ib-run-row').waitFor();
+      assert.equal(await page.locator('.ib-run-row .ib-badge').textContent(),language==='de'?'Gestoppt':'Stopped');
+      assert.equal(await page.locator('[data-action="stop"]').count(),0);
       assert.deepEqual(errors,[]);
       await context.close();
       console.log(`UI checks passed (${language}, desktop and mobile)`);

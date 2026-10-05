@@ -41,7 +41,9 @@ class Bridge {
             // Limited to this administrator-configured service; no global SSRF setting is weakened.
             'nextcloud' => ['allow_local_address' => true],
         ];
-        if (in_array($method, ['POST', 'PUT'], true)) { $options['body'] = json_encode($payload, JSON_THROW_ON_ERROR); }
+        // Empty PHP arrays serialize as [], but every worker request expects an object.
+        // Cast only the outer payload so nested arrays (days, excludes) remain arrays.
+        if (in_array($method, ['POST', 'PUT'], true)) { $options['body'] = json_encode((object)$payload, JSON_THROW_ON_ERROR); }
         try {
             $client = $this->clients->newClient();
             $response = match ($method) {

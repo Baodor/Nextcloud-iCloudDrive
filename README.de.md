@@ -222,7 +222,7 @@ iCloud Bridge Backups/JOB_ID/RUN_ID/
 
 Archive liegen auf dem jeweiligen Speicher außerhalb des ausgewählten Ordners. Sie werden **nicht automatisch gelöscht**. Prüfe den Speicherbedarf und entferne ältere Fassungen gezielt. Diese Archive ersetzen weder unabhängige Server-Backups noch iCloud-Wiederherstellung.
 
-Stoppen sendet SIGINT an den Übertragungsprozess, damit rclone seine Zustände geordnet sichern kann. Ein nach 90 Sekunden weiterhin laufender Prozess wird beendet. Ein Neustart markiert offene Läufe als unterbrochen und pausiert die betroffenen Jobs; Zustände bleiben erhalten. Prüfe Dateien und Protokolle vor einer neuen Vorschau/Initialisierung. `--resync` gehört nicht in jeden wiederkehrenden Lauf.
+Stoppen sendet SIGINT an den Übertragungsprozess, damit rclone seine Zustände geordnet sichern kann. Die UI zeigt **Wird gestoppt…** und deaktiviert die Schaltfläche **Stop angefordert**, bis der Lauf **Gestoppt** ist. Ein nach 90 Sekunden weiterhin laufender Prozess wird beendet. Ein Neustart markiert offene Läufe als unterbrochen und pausiert die betroffenen Jobs; Zustände bleiben erhalten. Prüfe Dateien und Protokolle vor einer neuen Vorschau/Initialisierung. `--resync` gehört nicht in jeden wiederkehrenden Lauf.
 
 ## Klassische Nextcloud ohne Docker
 
@@ -269,6 +269,7 @@ Das stoppt aktive Übertragungen und entfernt Bridge-Zugangsdaten, Zuordnungen u
 | Problem | Prüfen / beheben |
 |---|---|
 | Bridge nicht erreichbar | Gemeinsames Docker-Netz, `http://icloud-bridge:8080`, Dienst-Token und Containerzustand |
+| Stoppen/Trennen meldet `Expected a JSON object` | Nextcloud-App aktualisieren: `git pull --ff-only`, danach `bash scripts/install-nextcloud-app.sh nextcloud`. Browser neu laden und erneut versuchen. Älterer App-Code übertrug eine leere Anfrage als `[]` statt `{}`; für diese Korrektur genügt ein App-Update, während der Worker weiterläuft. |
 | `ModuleNotFoundError: No module named 'bridge'` beim Start | Aktuellen Code holen und Worker neu bauen/erstellen: `git pull --ff-only`, dann `docker compose up -d --build --force-recreate --wait --wait-timeout 120`. Das Image vereinheitlicht die Quelldateirechte und setzt den Python-Importpfad; Schlüssel und Datenvolume behalten. |
 | `PermissionError` für `site-packages/cryptography` beim Bauen/Starten | Aktuellen Code holen, `docker compose build --no-cache icloud-bridge` ausführen, danach `docker compose up -d --force-recreate --wait --wait-timeout 120 icloud-bridge`. Das Image setzt die Installations-Umask und macht installierte Abhängigkeiten für UID 10001 lesbar. |
 | Schlüsseldatei nicht lesbar | `sudo chown -R 10001:10001 secrets`; beide Dateien müssen existieren |
