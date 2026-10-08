@@ -91,5 +91,46 @@ class ProgressTests(unittest.TestCase):
         self.assertEqual(progress.stats["listed"], 2)
 
 
+    def test_iwork_download_has_activity_until_verified_zip_is_ready(self):
+        progress = Progress("copy")
+        self.ready(progress)
+        progress.update_stats({"bytes": 10, "totalBytes": 100})
+        progress.observe({"source": "iclouddrive/bridge_iwork.go:122", "level": "info",
+                          "object": "Documents/Report.key", "msg": "Preparing complete iWork download; measuring ZIP bytes before upload"})
+        self.assertEqual(progress.snapshot()["phase"], "iwork_download")
+        self.assertIsNone(progress.snapshot()["percent"])
+        self.assertEqual(progress.snapshot()["iwork_downloads"], ["Documents/Report.key"])
+        progress.observe({"source": "iclouddrive/bridge_iwork.go:140", "level": "info",
+                          "object": "Documents/Report.key", "msg": "Complete iWork download ready (100 ZIP bytes; 26000 bundle bytes)"})
+        self.assertEqual(progress.snapshot()["phase"], "transferring")
+        self.assertEqual(progress.snapshot()["percent"], 10)
+        self.assertEqual(progress.snapshot()["iwork_downloads"], [])
+
+    def test_preview_unknown_zip_sizes_use_copy_counts_and_mark_byte_lower_bound(self):
+        progress = Progress("bisync")
+        self.ready(progress)
+        progress.observe({"source": "operations/operations.go:2640", "skipped": "copy",
+                          "size": -1, "object": "Report.numbers", "msg": "Skipped copy as --dry-run is set"})
+        progress.update_stats({"bytes": 100, "totalBytes": 100, "transfers": 1, "totalTransfers": 4})
+        self.assertFalse(progress.snapshot()["bytes_known"])
+        self.assertEqual(progress.snapshot()["percent"], 25)
+
+    def test_repeated_502_upload_attempts_never_become_completed_copies(self):
+        progress = Progress("bisync")
+        self.ready(progress)
+        progress.observe({"source": "operations/copy.go:347", "level": "error",
+                          "object": "Documents/Report.key", "msg": "Failed to copy: uploading chunk failed: Bad Gateway: 502 Bad Gateway"})
+        progress.observe({"source": "bisync/operations.go:209", "level": "error",
+                          "msg": "Bisync critical error: unchunked simple update failed: Bad Gateway: 502 Bad Gateway"})
+        progress.update_stats({"bytes": 418279202, "totalBytes": 418279202, "errors": 14,
+                               "transfers": 0, "totalTransfers": 0, "fatalError": True})
+        run = {"status": "failed", "stats": progress.stats, "progress": progress.snapshot()}
+        finish_progress(run)
+        self.assertIsNone(run["progress"]["percent"])
+        self.assertEqual(run["stats"]["transfers"], 0)
+        self.assertEqual(run["progress"]["problem"], {"code": "nextcloud_upload_failed",
+                         "path": "Documents/Report.key", "http_status": 502})
+
+
 if __name__ == "__main__":
     unittest.main()

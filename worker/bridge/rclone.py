@@ -27,7 +27,8 @@ class Rclone:
         self.root = root
         self.config = root / "rclone.conf"
         self.env = {**os.environ, "RCLONE_CONFIG": str(self.config), "RCLONE_CONFIG_PASS": password,
-                    "RCLONE_RC_USER": "bridge", "RCLONE_RC_PASS": rc_password}
+                    "RCLONE_RC_USER": "bridge", "RCLONE_RC_PASS": rc_password,
+                    "ICLOUD_BRIDGE_PACKAGE_CACHE": str(root / "cache" / "iwork-downloads")}
         self.auth = "Basic " + base64.b64encode(f"bridge:{rc_password}".encode()).decode()
         self.opener = build_opener(ProxyHandler({}))
         if not self.config.exists():

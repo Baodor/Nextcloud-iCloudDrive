@@ -1,5 +1,6 @@
 import json
 import base64
+import hashlib
 from pathlib import Path
 from datetime import datetime, timezone
 import tempfile
@@ -19,12 +20,13 @@ from xml.etree import ElementTree
 
 
 class FakeRC:
+    version = "v1.75.1-icloud-bridge.1"
     def __init__(self):
         self.calls = []
         self.process = type("Process", (), {"poll": lambda self: None})()
     def call(self, endpoint, payload=None, **kw):
         self.calls.append((endpoint, payload or {}))
-        if endpoint == "core/version": return {"version": "v1.75.1"}
+        if endpoint == "core/version": return {"version": self.version}
         if endpoint == "operations/list": return {"list": []}
         if endpoint == "job/status": return {"finished": True, "output": {"result": "dry run log", "error": False}}
         return {}
@@ -69,6 +71,22 @@ class BridgeTests(unittest.TestCase):
         row = self.store.db.execute("SELECT secret FROM users WHERE uid='alice'").fetchone()[0]
         self.assertNotIn("sensitive", row)
         self.assertEqual(self.store.user("alice")[1]["dav_password"], "sensitive")
+    def test_download_cache_cleanup_only_removes_the_selected_account(self):
+        entries = {}
+        for uid in ("alice", "bob"):
+            namespace = hashlib.sha256(self.engine.remote(uid, "icloud")[:-1].encode()).hexdigest()
+            directory = self.root / "cache" / "iwork-downloads" / namespace
+            directory.mkdir(parents=True)
+            entries[uid] = directory / "version.zip"
+            entries[uid].write_bytes(b"private document")
+        self.engine.disconnect("alice", "icloud")
+        self.assertFalse(entries["alice"].exists())
+        self.assertEqual(entries["bob"].read_bytes(), b"private document")
+    def test_download_size_capability_requires_the_corrected_rclone_build(self):
+        self.assertEqual(self.engine.state("alice")["capabilities"]["iwork_download_size"], 1)
+        self.rc.version = "v1.75.1"
+        older = Engine(self.store, self.rc, self.root, "https://cloud.example.com")
+        self.assertEqual(older.state("alice")["capabilities"]["iwork_download_size"], 0)
     def test_initialization_requires_successful_preview(self):
         job = self.job()
         with self.assertRaises(BridgeError): self.engine.queue_run("alice", job["id"], "run")

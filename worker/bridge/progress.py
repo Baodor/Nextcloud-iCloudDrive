@@ -27,6 +27,8 @@ class Progress:
         self.totals_known = False
         self.updated = None
         self.problem = None
+        self.iwork_pending = set()
+        self.unknown_bytes = False
         self.stats = {k: 0 for k in COUNTERS}
         self.stats.update(eta=None, transferring=[], checking=[])
 
@@ -62,6 +64,14 @@ class Progress:
         self.update_stats(record.get("stats"), sanitize)
         source = record.get("source", "")
         message = re.sub(r"\x1b\[[0-9;]*m", "", record.get("msg", ""))
+        if record.get("skipped") == "copy" and number(record.get("size")) and record["size"] < 0:
+            self.unknown_bytes = True
+        if "bridge_iwork.go" in source:
+            name = sanitize(str(record.get("object", "")))[:2000]
+            if message.startswith("Preparing complete iWork download"):
+                self.iwork_pending.add(name)
+            elif message.startswith("Complete iWork download ready"):
+                self.iwork_pending.discard(name)
         if record.get("level") in ("error", "fatal"):
             self.stats["lastError"] = sanitize(message)[:2000]
             if "is a file not a directory" in message and self.problem is None:
@@ -69,6 +79,10 @@ class Progress:
                 package = re.match(r"^(.*?\.(?:pages|numbers|key))(?:/|$)", path, re.IGNORECASE)
                 self.problem = {"code": "file_directory_conflict", "path": sanitize(package[1] if package else path)[:2000],
                                 "iwork_package": bool(package)}
+            elif "502 Bad Gateway" in message and any(text in message for text in
+                    ("simple update failed", "uploading chunk failed")) and self.problem is None:
+                self.problem = {"code": "nextcloud_upload_failed", "path": sanitize(str(record.get("object", "")))[:2000],
+                                "http_status": 502}
         if source.startswith("bisync/"):
             if any(text in message for text in ("Resync is copying files to", "Do queued copies to", "Copying Path2 files to Path1")):
                 paths = re.findall(r"\bPath([12])\b", message)
@@ -94,17 +108,21 @@ class Progress:
     def snapshot(self):
         percent = None
         phase = self.phase
+        unknown = self.unknown_bytes or any(file.get("size", 0) < 0 for file in self.stats["transferring"])
         if self.phase == "transferring" and self.totals_known:
             done, total = self.stats["bytes"], self.stats["totalBytes"]
-            if not total or any(file.get("size", 0) < 0 for file in self.stats["transferring"]):
+            if not total or unknown:
                 done, total = self.stats["transfers"], self.stats["totalTransfers"]
             if total and done < total:
                 percent = math.floor(1000 * done / total) / 10
             elif total and done >= total:
                 # Bytes can finish before metadata, the opposite direction or validation.
                 phase = "finishing"
+        if self.iwork_pending:
+            phase, percent = "iwork_download", None
         return {"phase": phase, "direction": self.direction, "percent": percent, "problem": self.problem,
-                "scope": "known_transfers", "totals_known": self.totals_known, "updated": self.updated}
+                "scope": "known_transfers", "totals_known": self.totals_known, "updated": self.updated,
+                "bytes_known": not unknown, "iwork_downloads": sorted(self.iwork_pending)[:16]}
 
 
 def finish_progress(run):

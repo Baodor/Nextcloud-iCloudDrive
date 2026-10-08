@@ -75,6 +75,7 @@ with urlopen(request, timeout=5) as response:
 assert state["nextcloud_user"] == "docker-smoke"
 assert state["jobs"] == []
 assert state["rclone_version"].startswith("v1.75.1")
+assert state["capabilities"]["iwork_download_size"] == 1
 assert "RCLONE_ENCRYPT_V0:" in Path("/data/rclone.conf").read_text().splitlines()
 print("Production Compose startup, runtime imports and API authentication passed")
 PY

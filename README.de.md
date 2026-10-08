@@ -47,7 +47,7 @@ Für die direkte Dateiansicht startet je aktivem Benutzer ein eigener rclone-Web
 - Gemeinsames Docker-Netz oder eine private, von Nextcloud erreichbare Bridge-Adresse.
 - Genügend Nextcloud-Speicher für Dateikopien und Sicherungen.
 
-JavaScript und CSS werden fertig mitgeliefert. Zur Installation brauchst du weder Node/npm noch Composer, FUSE oder einen privilegierten Container. Das Dockerfile verwendet rclone **1.75.1** und die Python-3.12-Imageserie. Zugangsdaten und Laufzeitdaten liegen außerhalb von Git.
+JavaScript und CSS werden fertig mitgeliefert. Zur Installation brauchst du auf dem Host weder Node/npm noch Composer, Go, FUSE oder einen privilegierten Container. Docker kompiliert rclone **1.75.1** mit einer gezielten Korrektur am iCloud-Backend in einer eigenen Go-Baustufe; zur Laufzeit enthält das Image die fertige Binärdatei und Python 3.12. Der erste Image-Bau dauert durch das Herunterladen und Kompilieren der Go-Abhängigkeiten länger. Zugangsdaten und Laufzeitdaten liegen außerhalb von Git.
 
 ## Installation bei einer bestehenden Docker-Nextcloud
 
@@ -263,6 +263,20 @@ bash scripts/enable-iwork.sh JOB_ID NEXTCLOUD_CONTAINER
 ```
 
 Der Helfer vergleicht den Hash des laufenden iWork-Codes mit dem Checkout, prüft die API-Funktion, aktiviert die Paketbehandlung für genau diesen vorhandenen Job und entfernt ausschließlich die sechs früheren allgemeinen iWork-Ausschlüsse. Andere Filter bleiben erhalten. Mit dem optionalen Nextcloud-Containerargument prüft er auch die in Nextcloud konfigurierte Bridge-Adresse und erkennt eine Verbindung zu einem älteren Worker. Bei geänderten Einstellungen eine neue Vorschau prüfen und den Zwei-Wege-Job erneut initialisieren. Für einen benannten Worker-Container ohne Compose `BRIDGE_CONTAINER` setzen; für einen anderen Compose-Dienst `BRIDGE_SERVICE`.
+
+### Korrekte Größen beim Herunterladen von iCloud-iWork-Dokumenten
+
+Apple kann ein iWork-Dokument mit seiner **unkomprimierten Paketgröße** auflisten, während der Download ein **komprimiertes ZIP-Dokument** liefert. rclone 1.75.1 reicht die aufgelistete Größe an WebDAV weiter; die Abweichung kann unvollständige HTTP-Uploads, HTTP 502 und irreführende Datenzähler bei Wiederholungen verursachen. Das Bridge-Image baut deshalb `v1.75.1-icloud-bridge.1` aus festgelegtem Originalquellcode mit einer gezielten Korrektur am iCloud-Backend. Patch und Regressionstests liegen in `worker/rclone/`; Docker verweigert den Patch, falls die erwarteten Quellstellen abweichen. Zugehörige rclone-Berichte: [#8404](https://github.com/rclone/rclone/issues/8404) und [#9798](https://github.com/rclone/rclone/issues/9798).
+
+Bei `.pages`, `.numbers` und `.key` prüft das Backend, ob Apple einen normalen Datei-Download oder einen Paket-Download bereitstellt. Normale Dateien werden wie bisher gestreamt. Ein Paket lädt die Bridge automatisch in ihren privaten lokalen Speicher, prüft das vollständige ZIP einschließlich der CRC jedes Bestandteils und lädt es mit **der tatsächlich gemessenen Anzahl ZIP-Bytes** hoch. Teilbereichsabfragen verwenden ebenfalls diese Größe. Die heruntergeladenen Dokumentbytes, der Dateiname und die Endung bleiben erhalten: Entpacken, erneutes Packen oder ein manueller Export in Apple-Apps sind nicht nötig. Diese Download-Vorbereitung verändert nichts in iCloud.
+
+Geprüfte Downloads liegen unter `/data/cache/iwork-downloads/`, getrennt nach Konto und zugeordnet anhand von Apples Dokument-ID, Version/ETag, Änderungszeit und Paketgröße. Eine geänderte Version wird erneut geladen. Cache-Verzeichnisse und Dateien erhalten die Berechtigungen 700/600; länger als sieben Tage ungenutzte Einträge werden beim Vorbereiten eines weiteren Dokuments entfernt. Das Trennen oder Wechseln des Apple-Kontos entfernt dessen Cache. Plane Worker-Speicher für die zwischengespeicherten Dokumente und die temporäre Paketvorbereitung ein. Nur ZIP-Pakete werden zwischengespeichert; normale PDFs, Fotos und andere Dateien werden weiterhin gestreamt.
+
+**Eine Vorschau lädt keine Paket-Inhalte zur Größenbestimmung herunter.** Bei noch nicht zwischengespeicherten Paketen ist die Größe unbekannt; die UI kennzeichnet die geplanten Bytes als **„Geplant (mindestens)“**, während die Kopienanzahl weiterhin den Plan zeigt. Beim tatsächlichen Paket-Download erscheinen **„Vollständige iWork-Dokumente laden und prüfen“** und die aktuellen Pfade mit einer Aktivitätsanzeige bis zum Abschluss der Prüfung. Danach verwendet die Upload-Anzeige die gemessenen Größen. „Verarbeitete Daten“ können fehlgeschlagene und wiederholte Übertragungsversuche enthalten; **„Kopien abgeschlossen“** zählt erfolgreiche Kopien. Erst ein insgesamt erfolgreicher Lauf erreicht 100 %.
+
+Nach dem Aktualisieren `icloud-bridge` neu bauen und erstellen, die Nextcloud-App erneut installieren und `scripts/enable-iwork.sh JOB_ID NEXTCLOUD_CONTAINER` ausführen. Der Helfer verlangt sowohl das korrigierte Download-Backend als auch die aktuelle Paketbehandlung und prüft beides über die in Nextcloud konfigurierte Bridge-Adresse. Nach einem fehlgeschlagenen Zwei-Wege-Abgleich eine neue Vorschau prüfen und über **Initialisieren** den Zustand wiederherstellen, bevor der Zeitplan aktiviert wird. Die Initialisierung übernimmt nur auf einer Seite vorhandene Dateien in beide Richtungen und folgt bei Konflikten am selben Pfad dem gewählten Vorrang; prüfe diese Einstellung vor dem Start.
+
+HTTP-Testserver bilden Apples abweichende Paketgröße und Downloads ohne `Content-Length` nach. Anschließend kopiert der Test über rclones echte WebDAV-Implementierung und prüft die vollständigen Upload-Bytes und die Länge. Beschädigte/unvollständige Archive und Abbruch werden ebenfalls getestet. Diese Tests simulieren Apple-Antworten; sie schließen andere Ursachen für HTTP 502 bei einem bestimmten Reverse Proxy nicht aus.
 
 ## Klassische Nextcloud ohne Docker
 

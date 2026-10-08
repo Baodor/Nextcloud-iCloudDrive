@@ -3,6 +3,7 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from urllib.parse import quote, urlsplit
 import json
+import hashlib
 import queue
 import secrets
 import shutil
@@ -31,8 +32,9 @@ class Engine:
         self.active = None
         self.transfer = None
         self.dav = None
-        self.capabilities = {"iwork_packages": IWORK_REVISION}
         self.version = rc.call("core/version").get("version", "unknown")
+        self.capabilities = {"iwork_packages": IWORK_REVISION,
+                             "iwork_download_size": int("-icloud-bridge.1" in self.version)}
         # An interrupted process cannot prove its last changes: pause and retain checkpoints.
         for run in store.records("runs"):
             if run.get("iwork", {}).get("pending"):
@@ -71,6 +73,11 @@ class Engine:
 
     def remote(self, uid, side):
         return f"{side}_{tenant(uid)}:"
+
+    def clear_iwork_downloads(self, uid):
+        name = self.remote(uid, "icloud")[:-1]
+        namespace = hashlib.sha256(name.encode()).hexdigest()
+        shutil.rmtree(self.root / "cache" / "iwork-downloads" / namespace, ignore_errors=True)
 
     def busy(self, uid):
         return any(r["status"] in {"running", "queued"} for r in self.store.records("runs", uid))
@@ -131,6 +138,7 @@ class Engine:
             public, secret = self.store.user(uid)
             if public.get("apple_id") and public["apple_id"].casefold() != email.casefold():
                 self.invalidate_account_jobs(uid)
+                self.clear_iwork_downloads(uid)
             public.update(icloud_connected=False, apple_id=email)
             parameters = {"apple_id": email, "password": password, "service": "drive"}
             secret["auth_parameters"] = parameters
@@ -414,6 +422,7 @@ class Engine:
                 secret = {k: v for k, v in secret.items() if not k.startswith("auth_") and k != "dav_password"}
                 if self.dav:
                     self.dav.close_user(uid)
+                self.clear_iwork_downloads(uid)
             self.rc.call("config/delete", {"name": self.remote(uid, side)[:-1]})
             self.store.save_user(uid, public, secret)
             for job in self.store.records("jobs", uid):
@@ -433,6 +442,7 @@ class Engine:
                 self.dav.close_user(uid)
             shutil.rmtree(self.root / "cache" / tenant(uid), ignore_errors=True)
             shutil.rmtree(self.root / "iwork" / tenant(uid), ignore_errors=True)
+            self.clear_iwork_downloads(uid)
             for job in self.store.records("jobs", uid):
                 for state_dir in (self.root / "state").glob(job["id"] + "*"):
                     shutil.rmtree(state_dir, ignore_errors=True)

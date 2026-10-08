@@ -7,6 +7,7 @@ permissions:
 jobs:
   worker:
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
       - name: Build worker with private checkout and restrictive build umask
@@ -42,7 +43,7 @@ jobs:
       - run: npm run test:ui
   nextcloud:
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
