@@ -153,7 +153,7 @@ func TestBridgeIWorkCancelledOpenDoesNotDownload(t *testing.T) {
 
 func TestBridgeIWorkWebDAVReceivesMeasuredLengthAndCompleteBytes(t *testing.T) {
 	body := bridgeTestArchive(t)
-	for _, chunkSize := range []string{"0", "64"} {
+	for _, chunkSize := range []string{"0", "64B"} {
 		t.Run("chunk_size_"+chunkSize, func(t *testing.T) {
 			t.Setenv(bridgeIWorkCacheEnv, t.TempDir())
 			cloud, _ := bridgeTestCloud(t, body, true)
