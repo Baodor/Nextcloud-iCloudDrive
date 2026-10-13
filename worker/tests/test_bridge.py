@@ -87,6 +87,36 @@ class BridgeTests(unittest.TestCase):
         self.rc.version = "v1.75.1"
         older = Engine(self.store, self.rc, self.root, "https://cloud.example.com")
         self.assertEqual(older.state("alice")["capabilities"]["iwork_download_size"], 0)
+
+    def test_download_capabilities_distinguish_old_and_new_bridge_builds(self):
+        for version, size, lookup in (("v1.75.1", 0, 0), ("v1.75.1-icloud-bridge.1", 1, 0),
+                                     ("v1.75.1-icloud-bridge.2", 1, 1)):
+            self.rc.version = version
+            engine = Engine(self.store, self.rc, self.root, "https://cloud.example.com")
+            capabilities = engine.state("alice")["capabilities"]
+            self.assertEqual(capabilities["iwork_download_size"], size)
+            self.assertEqual(capabilities["icloud_download_errors"], lookup)
+
+    def test_run_retains_actual_binary_version_in_details(self):
+        job = self.job(mode="download")
+        run = self.engine.queue_run("alice", job["id"], "preview")
+        self.engine.execute("alice", self.store.get("runs", "alice", run["id"]))
+        result = self.store.get("runs", "alice", run["id"])
+        self.assertEqual(result["runtime"]["rclone_version"], self.rc.version)
+        self.assertIn(self.rc.version, result["log"])
+        self.assertIn('"source": "bridge/runtime"', result["log"])
+
+    def test_unpatched_binary_stops_before_iwork_normalization_or_transfer(self):
+        self.rc.version = "v1.75.1"
+        self.engine = Engine(self.store, self.rc, self.root, "https://cloud.example.com")
+        job = self.job(mode="download")
+        run = self.engine.queue_run("alice", job["id"], "run")
+        self.engine.execute("alice", self.store.get("runs", "alice", run["id"]))
+        result = self.store.get("runs", "alice", run["id"])
+        self.assertEqual(result["status"], "failed")
+        self.assertIn("Rebuild and recreate", result["error"])
+        self.assertFalse(any(endpoint in {"copy", "bisync", "operations/copyfile", "operations/list"}
+                             for endpoint, _ in self.rc.calls))
     def test_initialization_requires_successful_preview(self):
         job = self.job()
         with self.assertRaises(BridgeError): self.engine.queue_run("alice", job["id"], "run")

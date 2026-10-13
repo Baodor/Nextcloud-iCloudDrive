@@ -266,7 +266,7 @@ The helper compares the running worker's iWork source hash with your checkout, c
 
 ### Correct sizes for iCloud iWork downloads
 
-Apple can list an iWork document with its **uncompressed package size** while its download token serves a **compressed ZIP document**. Upstream rclone 1.75.1 passes the listed size to WebDAV; the mismatch can cause incomplete HTTP uploads, HTTP 502 errors and misleading retry byte counts. The bridge image therefore builds version `v1.75.1-icloud-bridge.1` from pinned upstream source with a focused iCloud backend correction. The patch and regression tests are in `worker/rclone/`; Docker refuses to apply it if the expected upstream source differs. Related upstream reports: [#8404](https://github.com/rclone/rclone/issues/8404) and [#9798](https://github.com/rclone/rclone/issues/9798).
+Apple can list an iWork document with its **uncompressed package size** while its download token serves a **compressed ZIP document**. Upstream rclone 1.75.1 passes the listed size to WebDAV; the mismatch can cause incomplete HTTP uploads, HTTP 502 errors and misleading retry byte counts. The bridge image therefore builds version `v1.75.1-icloud-bridge.2` from pinned upstream source with a focused iCloud backend correction. The patch and regression tests are in `worker/rclone/`; Docker refuses to apply it if the expected upstream source differs. Related upstream reports: [#8404](https://github.com/rclone/rclone/issues/8404) and [#9798](https://github.com/rclone/rclone/issues/9798).
 
 For `.pages`, `.numbers` and `.key` downloads, the backend checks whether Apple supplies a normal data token or a package token. A normal file streams as before. A package is automatically downloaded to private worker storage, checked as a complete ZIP including every member's CRC, and uploaded using **the measured number of ZIP bytes**. Range requests also use that measured size. The downloaded document's bytes, filename and extension remain unchanged: no extraction, repacking or manual export in Apple apps is required. This download preparation makes no changes to iCloud.
 
@@ -275,6 +275,22 @@ Verified downloads are cached under `/data/cache/iwork-downloads/`, separated by
 **A preview does not download package bodies to find their sizes.** For uncached packages, it reports an unknown size and the UI labels planned bytes as **“Planned (at least)”**; the copy count still shows the plan. During an actual package download the UI shows **“Loading and verifying complete iWork documents”** and the current paths, with an activity indicator until verification finishes. Subsequent upload progress uses measured sizes. “Data processed” can include failed/retried transfer attempts; **“copies completed”** is the successful-copy counter, and only a successful entire run reaches 100%.
 
 After updating, rebuild and recreate `icloud-bridge`, reinstall the Nextcloud app, and run `scripts/enable-iwork.sh JOB_ID NEXTCLOUD_CONTAINER`. The helper requires both the corrected download backend and the updated package handler, including through Nextcloud's configured bridge URL. After a failed bisync, review a new preview and use **Initialize** to recover before enabling scheduled runs. Initialization merges unique files from both sides and follows your selected priority for same-path conflicts, so review that setting before starting it.
+
+### “RootURL not set” and failed retry attempts
+
+Upstream rclone 1.75.1 overwrites errors from Apple's download-link lookup and then attempts a download with an empty URL. An underlying permission, authentication or API error can therefore appear as `RootURL not set`. Build `-icloud-bridge.2` preserves the original error, rejects unusable links and selects a valid package link when the data token has no usable URL. If neither token contains a valid link, the file stops with an explicit error. The fix does not restore permissions or repair an expired Apple session.
+
+HTTP 502 from a Nextcloud upload is a separate failure. iWork size mismatches can cause it, but the status alone cannot identify a particular proxy or Nextcloud fault. Activity retains both upload and download failures with file names. Processed bytes include retries; completed copies and the final exit status establish success. `packages_found: 0` counts Nextcloud directories requiring package preparation, not all iCloud iWork files.
+
+New run logs include the actual binary version and capabilities. These commands read local metadata and API health without starting transfers or changing settings:
+
+```bash
+bash scripts/check-runtime.sh
+# Optionally verify Nextcloud's configured bridge and installed app files too:
+bash scripts/check-runtime.sh NEXTCLOUD_CONTAINER
+```
+
+The report includes existing job IDs, initialization priority and the last run's failed file names. A mismatched runtime/app fails the check. Both `iwork_download_size` and `icloud_download_errors` must be `1` after updating. Reload Nextcloud with a browser cache refresh after reinstalling app files. A failed Bisync remains paused: fix the causes, review a fresh preview and initialization priority, then explicitly initialize. No automatic resync is performed.
 
 Build-time HTTP fixtures reproduce Apple's wrong package size and missing download `Content-Length`, then copy through rclone's real WebDAV implementation and verify exact upload bytes and length. Invalid/truncated archives and cancellation are also tested. These tests simulate Apple responses; they do not establish that a specific reverse proxy's HTTP 502 has no other cause.
 

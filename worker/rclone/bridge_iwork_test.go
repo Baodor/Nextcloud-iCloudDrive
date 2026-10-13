@@ -39,15 +39,21 @@ func bridgeTestArchive(t *testing.T) []byte {
 }
 
 func bridgeTestCloud(t *testing.T, body []byte, packageToken bool) (*Fs, *atomic.Int64) {
+	return bridgeTestCloudResponse(t, body, func(w http.ResponseWriter, endpoint string) {
+		kind := "data_token"
+		if packageToken { kind = "package_token" }
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{kind: map[string]string{"url": endpoint + "/payload"}})
+	})
+}
+
+func bridgeTestCloudResponse(t *testing.T, body []byte, metadata func(http.ResponseWriter, string)) (*Fs, *atomic.Int64) {
 	t.Helper()
 	var downloads atomic.Int64
 	var server *httptest.Server
 	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasSuffix(r.URL.Path, "/download/by_id") {
-			kind := "data_token"
-			if packageToken { kind = "package_token" }
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(map[string]any{kind: map[string]string{"url": server.URL + "/payload"}})
+			metadata(w, server.URL)
 			return
 		}
 		if r.URL.Path != "/payload" { http.NotFound(w, r); return }
@@ -65,6 +71,88 @@ func bridgeTestCloud(t *testing.T, body []byte, packageToken bool) (*Fs, *atomic
 	if err != nil { t.Fatal(err) }
 	return &Fs{name: "icloud_fixture", service: service, features: &fs.Features{},
 		pacer: fs.NewPacer(context.Background(), pacer.NewDefault(pacer.MinSleep(time.Millisecond)))}, &downloads
+}
+
+func TestBridgeIWorkDownloadTokensRequireUsableURLs(t *testing.T) {
+	for _, test := range []struct {
+		name, reply string
+		packageToken, invalid bool
+	}{
+		{"data", `{"data_token":{"url":"%URL%/payload"},"package_token":{"url":"%URL%/package"}}`, false, false},
+		{"empty_data_with_package", `{"data_token":{},"package_token":{"url":"%URL%/payload"}}`, true, false},
+		{"invalid_data_with_package", `{"data_token":{"url":"bad"},"package_token":{"url":"%URL%/payload"}}`, true, false},
+		{"missing_tokens", `{}`, false, true},
+		{"empty_tokens", `{"data_token":{},"package_token":{}}`, false, true},
+		{"relative_token", `{"data_token":{"url":"/payload"}}`, false, true},
+		{"non_http_token", `{"data_token":{"url":"file:///private/document"}}`, false, true},
+		{"null_response", `null`, false, true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			cloud, downloads := bridgeTestCloudResponse(t, nil, func(w http.ResponseWriter, endpoint string) {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(w, strings.ReplaceAll(test.reply, "%URL%", endpoint))
+			})
+			link, packageToken, _, err := cloud.service.GetDownloadDetailsByDriveID(context.Background(), "FILE::com.apple.CloudDocs::fixture")
+			if test.invalid {
+				if err == nil || !strings.Contains(err.Error(), "iCloud did not supply a usable document download URL") {
+					t.Fatalf("missing/invalid URL must have an explicit error, got %q, %v", link, err)
+				}
+			} else if err != nil || packageToken != test.packageToken || !strings.HasSuffix(link, "/payload") {
+				t.Fatalf("wrong token selection: %q, package=%v, error=%v", link, packageToken, err)
+			}
+			if downloads.Load() != 0 { t.Fatal("token lookup downloaded a document") }
+		})
+	}
+}
+
+func TestBridgeIWorkOpenPreservesDownloadLookupFailure(t *testing.T) {
+	t.Setenv(bridgeIWorkCacheEnv, "") // Exercise upstream's ordinary streaming path.
+	cloud, downloads := bridgeTestCloudResponse(t, nil, func(w http.ResponseWriter, endpoint string) {
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = io.WriteString(w, "download permission denied")
+	})
+	object := bridgeTestObject(t, cloud, "Report.numbers", "v1", 100)
+	reader, err := object.Open(context.Background())
+	if err == nil { _ = reader.Close(); t.Fatal("failed token lookup opened a document") }
+	if strings.Contains(err.Error(), "RootURL not set") || !strings.Contains(err.Error(), "403") {
+		t.Fatalf("download lookup error was overwritten: %v", err)
+	}
+	if downloads.Load() != 0 { t.Fatal("failed lookup started a download") }
+}
+
+func TestBridgeIWorkPackageFallbackUsesMeasuredZIPSize(t *testing.T) {
+	t.Setenv(bridgeIWorkCacheEnv, t.TempDir())
+	body := bridgeTestArchive(t)
+	cloud, downloads := bridgeTestCloudResponse(t, body, func(w http.ResponseWriter, endpoint string) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data_token": map[string]string{}, "package_token": map[string]string{"url": endpoint + "/payload"},
+		})
+	})
+	object := bridgeTestObject(t, cloud, "Report.numbers", "v1", 26000)
+	if object.Size() != -1 { t.Fatal("empty data token prevented ZIP-size preparation") }
+	reader, err := object.Open(context.Background())
+	if err != nil { t.Fatal(err) }
+	got, err := io.ReadAll(reader)
+	_ = reader.Close()
+	if err != nil || !bytes.Equal(got, body) || object.Size() != int64(len(body)) || downloads.Load() != 1 {
+		t.Fatal("package fallback did not preserve and measure the ZIP payload")
+	}
+}
+
+func TestBridgeIWorkMissingDownloadURLIdentifiesDocument(t *testing.T) {
+	t.Setenv(bridgeIWorkCacheEnv, t.TempDir())
+	cloud, downloads := bridgeTestCloudResponse(t, nil, func(w http.ResponseWriter, endpoint string) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"data_token":{},"package_token":{}}`)
+	})
+	_, err := cloud.NewObjectFromDriveItem(context.Background(), "Leasing/Cost.numbers", &api.DriveItem{
+		Type: "FILE", Size: 100, Drivewsid: "FILE::com.apple.CloudDocs::fixture",
+	})
+	if err == nil || !strings.Contains(err.Error(), `"Leasing/Cost.numbers"`) || !strings.Contains(err.Error(), "usable document download URL") {
+		t.Fatalf("listing failure did not identify the document: %v", err)
+	}
+	if downloads.Load() != 0 { t.Fatal("missing link started a download") }
 }
 
 func bridgeTestObject(t *testing.T, cloud *Fs, name, version string, size int64) fs.Object {

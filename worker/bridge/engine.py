@@ -5,6 +5,7 @@ from urllib.parse import quote, urlsplit
 import json
 import hashlib
 import queue
+import re
 import secrets
 import shutil
 import threading
@@ -12,7 +13,7 @@ import time
 import uuid
 from .models import BridgeError, MARKER, tenant, path, overlap, validate_job, next_due, make_command
 from .rclone import redact
-from .progress import finish_progress
+from .progress import classify_failure, finish_progress
 from .iwork import IWork, IWORK_REVISION, recover as recover_iwork
 
 
@@ -33,8 +34,11 @@ class Engine:
         self.transfer = None
         self.dav = None
         self.version = rc.call("core/version").get("version", "unknown")
+        build = re.search(r"-icloud-bridge\.(\d+)$", self.version)
+        revision = int(build[1]) if build else 0
         self.capabilities = {"iwork_packages": IWORK_REVISION,
-                             "iwork_download_size": int("-icloud-bridge.1" in self.version)}
+                             "iwork_download_size": int(revision >= 1),
+                             "icloud_download_errors": int(revision >= 2)}
         # An interrupted process cannot prove its last changes: pause and retain checkpoints.
         for run in store.records("runs"):
             if run.get("iwork", {}).get("pending"):
@@ -306,6 +310,10 @@ class Engine:
         if not job:
             return
         run.update(status="running", actual_started=now(), progress={"phase": "preparing", "percent": None})
+        run["runtime"] = {"rclone_version": self.version, "capabilities": dict(self.capabilities)}
+        run["preflight_log"] = json.dumps({"time": now(), "level": "info", "source": "bridge/runtime",
+                                           "msg": "Effective worker runtime", **run["runtime"]}) + "\n"
+        run["log"] = run["preflight_log"]
         self.active = run["id"]
         self.store.put("runs", uid, run)
         work = None
@@ -313,6 +321,8 @@ class Engine:
             public, _ = self.store.user(uid)
             if not public.get("icloud_connected") or not public.get("nextcloud_connected"):
                 raise BridgeError("A connection was removed before this job started.", 409)
+            if run["action"] != "preview" and job["mode"] != "upload" and job.get("iwork_packages", True) and not self.capabilities["iwork_download_size"]:
+                raise BridgeError("The running rclone lacks the iCloud ZIP-size fix. Rebuild and recreate icloud-bridge before copying iWork documents.", 409)
             deadline = time.monotonic() + job["timeout_minutes"] * 60
             command, args, opts, work = self.prepare(uid, job, run, deadline)
             with self.lock:
@@ -337,7 +347,12 @@ class Engine:
                     if run.get("cancel_requested"):
                         raise BridgeError("Run stopped. Review the folders before restarting.", 409)
                     if code:
-                        raise BridgeError(f"rclone exited with code {code}. Inspect the run log for details.", 502)
+                        labels = {"icloud_download_failed": "iCloud document download failed",
+                                  "nextcloud_upload_failed": "Upload to Nextcloud failed",
+                                  "file_directory_conflict": "File/folder conflict"}
+                        codes = dict.fromkeys(p["code"] for p in run["progress"].get("problems", []))
+                        cause = "; ".join(labels[c] for c in codes if c in labels) or "rclone failed"
+                        raise BridgeError(f"{cause} (rclone exit {code}). Inspect the affected files in the run details.", 502)
                     break
                 with self.lock:
                     if self.store.get("runs", uid, run["id"]):
@@ -350,11 +365,16 @@ class Engine:
                 job["last_success"] = now()
         except Exception as error:
             run.update(status="stopped" if run.get("cancel_requested") else "failed", error=redact(str(error)))
+            # A listing/preflight failure happens before a Transfer can collect telemetry.
+            problem = classify_failure(str(error), sanitize=redact)
+            if problem and not run["progress"].get("problem"):
+                run["progress"].update(problem=problem, problems=[problem])
             if run["action"] != "preview":
                 job.update(enabled=False)
                 # Recovery must be reviewed, never silently replace checkpoints with --resync.
                 if job["mode"] == "bisync":
                     job["initialized"] = False
+                    run["progress"]["recovery_required"] = True
         finally:
             run["finished"] = now()
             finish_progress(run)

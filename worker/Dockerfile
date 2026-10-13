@@ -12,7 +12,7 @@ RUN gofmt -w bridge_main.go backend/iclouddrive/bridge_iwork*.go \
     backend/iclouddrive/iclouddrive.go backend/iclouddrive/api/drive.go \
     && CGO_ENABLED=0 go test -v ./backend/iclouddrive -run '^TestBridgeIWork' \
     && CGO_ENABLED=0 go build -trimpath \
-    -ldflags='-s -w -X github.com/rclone/rclone/fs.Version=v1.75.1-icloud-bridge.1' \
+    -ldflags='-s -w -X github.com/rclone/rclone/fs.Version=v1.75.1-icloud-bridge.2' \
     -o /usr/local/bin/rclone bridge_main.go \
     && chmod 755 /usr/local/bin/rclone
 FROM python:3.12-slim

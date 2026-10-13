@@ -104,6 +104,7 @@ docker exec "$nc" curl -fsS -u "member:$password" -H 'OCS-APIRequest: true' -H '
   | python3 -c 'import json,sys; run=json.load(sys.stdin)["ocs"]["data"]; assert run["status"] == "stopped",run; assert run["finished"],run'
 echo "Checking deployed iWork handler and migration of one job"
 BRIDGE_CONTAINER="$bridge" bash scripts/enable-iwork.sh aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa "$nc"
+BRIDGE_CONTAINER="$bridge" bash scripts/check-runtime.sh "$nc"
 docker exec "$nc" curl -fsS -u "member:$password" -H 'OCS-APIRequest: true' \
   'http://localhost/ocs/v2.php/apps/icloud_drive/api/state?format=json' \
   | python3 -c 'import json,sys; state=json.load(sys.stdin)["ocs"]["data"]; assert state["capabilities"]["iwork_packages"] == 2,state; job=state["jobs"][0]; assert job["iwork_packages"] and job["excludes"] == [".DS_Store"] and job["initialized"] is False and job["enabled"] is False,job'
