@@ -1,5 +1,6 @@
 """Measured progress for rclone's changing queues and multi-stage bisync runs."""
 from datetime import datetime, timezone
+import json
 import math
 import re
 
@@ -10,6 +11,29 @@ COUNTERS = ("bytes", "totalBytes", "checks", "totalChecks", "listed", "transfers
 
 def number(value):
     return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+
+
+def classify_failure(message, name="", object_type="", sanitize=str):
+    name = sanitize(str(name))[:2000]
+    if "is a file not a directory" in message:
+        package = re.match(r"^(.*?\.(?:pages|numbers|key))(?:/|$)", name, re.IGNORECASE)
+        return {"code": "file_directory_conflict", "path": package[1] if package else name,
+                "iwork_package": bool(package)}
+    if "502 Bad Gateway" in message and any(text in message for text in
+            ("simple update failed", "uploading chunk failed")):
+        return {"code": "nextcloud_upload_failed", "path": name, "http_status": 502}
+    if any(text in message for text in ("RootURL not set", "iCloud did not supply a usable document download URL",
+            "iCloud did not supply a document download token", "cannot resolve complete iWork document")) or (
+            "failed to open source object" in message and "iclouddrive" in object_type):
+        if not name:
+            match = re.search(r'cannot resolve complete iWork document ("(?:[^"\\]|\\.)*"):', message)
+            if match:
+                try:
+                    name = sanitize(json.loads(match[1]))[:2000]
+                except ValueError:
+                    pass
+        return {"code": "icloud_download_failed", "path": name}
+    return None
 
 
 class Progress:
@@ -27,10 +51,23 @@ class Progress:
         self.totals_known = False
         self.updated = None
         self.problem = None
+        self.problems = []
+        self.recovery_required = False
         self.iwork_pending = set()
         self.unknown_bytes = False
         self.stats = {k: 0 for k in COUNTERS}
         self.stats.update(eta=None, transferring=[], checking=[])
+
+    def record_problem(self, problem):
+        if not problem:
+            return
+        if self.problem is None:
+            self.problem = problem
+        # Bisync repeats the underlying error without its file name at exit.
+        if not problem["path"] and any(p["code"] == problem["code"] for p in self.problems):
+            return
+        if problem not in self.problems and len(self.problems) < 32:
+            self.problems.append(problem)
 
     def update_stats(self, data, sanitize=str):
         if not isinstance(data, dict) or not any(number(data.get(k)) for k in COUNTERS):
@@ -74,15 +111,9 @@ class Progress:
                 self.iwork_pending.discard(name)
         if record.get("level") in ("error", "fatal"):
             self.stats["lastError"] = sanitize(message)[:2000]
-            if "is a file not a directory" in message and self.problem is None:
-                path = str(record.get("object", ""))
-                package = re.match(r"^(.*?\.(?:pages|numbers|key))(?:/|$)", path, re.IGNORECASE)
-                self.problem = {"code": "file_directory_conflict", "path": sanitize(package[1] if package else path)[:2000],
-                                "iwork_package": bool(package)}
-            elif "502 Bad Gateway" in message and any(text in message for text in
-                    ("simple update failed", "uploading chunk failed")) and self.problem is None:
-                self.problem = {"code": "nextcloud_upload_failed", "path": sanitize(str(record.get("object", "")))[:2000],
-                                "http_status": 502}
+            self.record_problem(classify_failure(message, record.get("object", ""), record.get("objectType", ""), sanitize))
+            if "must run --resync" in message.lower():
+                self.recovery_required = True
         if source.startswith("bisync/"):
             if any(text in message for text in ("Resync is copying files to", "Do queued copies to", "Copying Path2 files to Path1")):
                 paths = re.findall(r"\bPath([12])\b", message)
@@ -121,6 +152,7 @@ class Progress:
         if self.iwork_pending:
             phase, percent = "iwork_download", None
         return {"phase": phase, "direction": self.direction, "percent": percent, "problem": self.problem,
+                "problems": list(self.problems), "recovery_required": self.recovery_required,
                 "scope": "known_transfers", "totals_known": self.totals_known, "updated": self.updated,
                 "bytes_known": not unknown, "iwork_downloads": sorted(self.iwork_pending)[:16]}
 

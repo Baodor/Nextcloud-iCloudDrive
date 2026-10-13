@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased — 2026-10-13
+
+- The pinned rclone bridge build preserves Apple download-link lookup errors instead of replacing them with `RootURL not set`. Empty or invalid data-token URLs fall back to a valid package-token URL with verified ZIP-size handling; missing usable links stop the file explicitly.
+- Run details retain the effective binary version and capabilities. Unpatched downloads stop before package preparation or transfer; deployment checks require the corrected download-link build.
+- Activity retains multiple upload/download failure paths after a Bisync abort, distinguishes retry bytes from completed copies, and explains preview/initialization recovery in English and German.
+- Added read-only worker/app diagnostics and regression coverage for token responses, HTTP 403, package-size fallback, combined failures and responsive error details.
+
 ## 0.1.0 — 2026-10-05
 
 - Native Nextcloud app with English/German UI, responsive layout and administrator-only service configuration.

@@ -131,6 +131,41 @@ class ProgressTests(unittest.TestCase):
         self.assertEqual(run["progress"]["problem"], {"code": "nextcloud_upload_failed",
                          "path": "Documents/Report.key", "http_status": 502})
 
+    def test_upload_and_download_failures_survive_the_final_bisync_abort(self):
+        progress = Progress("bisync")
+        upload = {"source": "operations/copy.go:347", "level": "error", "object": "Report.key",
+                  "msg": "Failed to copy: uploading chunk failed: Bad Gateway: 502 Bad Gateway"}
+        progress.observe(upload)
+        progress.observe(upload)  # Low-level retries must not duplicate file entries.
+        for name in ("Comparison.numbers", "Charging.numbers"):
+            progress.observe({"source": "operations/copy.go:347", "level": "error", "object": name,
+                              "msg": "Failed to copy: failed to open source object: RootURL not set"})
+        progress.observe({"source": "bisync/operations.go:209", "level": "error",
+                          "msg": "Bisync critical error: failed to open source object: RootURL not set"})
+        progress.observe({"source": "bisync/operations.go:210", "level": "error",
+                          "msg": "\u001b[31mBisync aborted. Must run --resync to recover.\u001b[0m"})
+        progress.update_stats({"bytes": 418012485, "totalBytes": 418012485,
+                               "transfers": 0, "totalTransfers": 0, "errors": 14, "fatalError": True})
+        result = progress.snapshot()
+        self.assertEqual(result["problems"], [
+            {"code": "nextcloud_upload_failed", "path": "Report.key", "http_status": 502},
+            {"code": "icloud_download_failed", "path": "Comparison.numbers"},
+            {"code": "icloud_download_failed", "path": "Charging.numbers"},
+        ])
+        self.assertTrue(result["recovery_required"])
+        self.assertIsNone(result["percent"])
+
+    def test_new_download_error_is_classified_without_rooturl_placeholder(self):
+        progress = Progress("bisync")
+        progress.observe({"level": "error", "object": "Report.numbers",
+                          "msg": "cannot resolve complete iWork document: iCloud did not supply a usable document download URL"})
+        self.assertEqual(progress.snapshot()["problem"], {"code": "icloud_download_failed", "path": "Report.numbers"})
+
+    def test_preflight_download_lookup_keeps_document_name(self):
+        progress = Progress("bisync")
+        progress.observe({"level": "error", "msg": 'cannot resolve complete iWork document "Leasing/Cost \\"2026\\".numbers": iCloud did not supply a usable document download URL'})
+        self.assertEqual(progress.snapshot()["problem"], {"code": "icloud_download_failed", "path": 'Leasing/Cost "2026".numbers'})
+
 
 if __name__ == "__main__":
     unittest.main()

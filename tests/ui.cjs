@@ -129,6 +129,21 @@ const job = {id:'a'.repeat(32),name:'Documents',icloud_path:'Documents',nextclou
       assert.equal(await bar.getAttribute('aria-valuenow'),null,'retry byte counters must not turn a failed upload into 100%');
       assert.match(await page.locator('.ib-progress-stats').textContent(),language==='de'?/0 Kopien abgeschlossen/:/0 copies completed/);
       assert.match(await page.locator('.ib-progress-stats').textContent(),language==='de'?/Verarbeitete Daten/:/Data processed/);
+      fixture.runs[0].progress.problems=[fixture.runs[0].progress.problem,
+        {code:'icloud_download_failed',path:'Documents/Comparison.numbers'},
+        {code:'icloud_download_failed',path:'Documents/Charging <2026>.numbers'}];
+      fixture.runs[0].progress.recovery_required=true;
+      await page.reload();await page.getByRole('button',{name:language==='de'?'Aktivität':'Activity',exact:true}).click();
+      await page.locator('.ib-upload-problem').waitFor();
+      await page.locator('.ib-download-problem').waitFor();
+      await page.locator('.ib-recovery-problem').waitFor();
+      assert.deepEqual(await page.locator('.ib-download-problem code').allTextContents(),
+        ['Documents/Comparison.numbers','Documents/Charging <2026>.numbers']);
+      assert.match(await page.locator('.ib-recovery-problem').textContent(),language==='de'?/beide Richtungen/:/both directions/);
+      assert.equal(await bar.getAttribute('aria-valuenow'),null);
+      await page.setViewportSize({width:390,height:844});
+      assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'failure details overflow on mobile');
+      await page.setViewportSize({width:1440,height:960});
       fixture.runs[0].status='success';fixture.runs[0].action='preview';delete fixture.runs[0].error;
       fixture.runs[0].progress={phase:'success',percent:100};fixture.runs[0].stats={bytes:4096,totalBytes:4096,transfers:2,totalTransfers:2,speed:0};
       await page.reload();await page.getByRole('button',{name:language==='de'?'Aktivität':'Activity',exact:true}).click();

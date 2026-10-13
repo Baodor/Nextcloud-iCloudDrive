@@ -25,10 +25,30 @@ replace("backend/iclouddrive/api/drive.go",
 // GetDownloadDetailsByDriveID identifies the flat data or zipped package representation.
 func (d *DriveService) GetDownloadDetailsByDriveID(ctx context.Context, id string) (string, bool, *http.Response, error) {''')
 replace("backend/iclouddrive/api/drive.go", 'return "", resp, err\n\t}\n\n\tvar url string',
-    'return "", false, resp, err\n\t}\n\n\tif filer == nil || (filer.DataToken == nil && filer.PackageToken == nil) {\n\t\treturn "", false, resp, fmt.Errorf("iCloud did not supply a document download token")\n\t}\n\n\tvar url string')
-replace("backend/iclouddrive/api/drive.go", 'return url, resp, err\n}',
-    'return url, filer.DataToken == nil, resp, err\n}')
+    'return "", false, resp, err\n\t}\n\n\tvar url string')
+replace("backend/iclouddrive/api/drive.go", '''\tvar url string
+\tif filer.DataToken != nil {
+\t\turl = filer.DataToken.URL
+\t} else {
+\t\turl = filer.PackageToken.URL
+\t}
+
+\treturn url, resp, err
+}''', '''\tif filer != nil {
+        for index, token := range []*FileRequestToken{filer.DataToken, filer.PackageToken} {
+            if token == nil { continue }
+            parsed, parseErr := url.Parse(token.URL)
+            if parseErr == nil && (parsed.Scheme == "http" || parsed.Scheme == "https") && parsed.Host != "" {
+                return token.URL, index == 1, resp, nil
+            }
+        }
+    }
+    return "", false, resp, fmt.Errorf("iCloud did not supply a usable document download URL")
+}''')
 replace("backend/iclouddrive/api/drive.go", '\t"context"\n', '\t"context"\n\t"fmt"\n')
+replace("backend/iclouddrive/iclouddrive.go",
+    'url, _, err = o.fs.service.GetDownloadURLByDriveID(ctx, o.driveID)\n',
+    'url, resp, err = o.fs.service.GetDownloadURLByDriveID(ctx, o.driveID)\n\t\tif err != nil {\n\t\t\treturn shouldRetry(ctx, resp, err)\n\t\t}\n')
 replace("backend/iclouddrive/iclouddrive.go", '\tdownloadURL string\n}', '\tdownloadURL string\n\tbridgePackage *bridgePackage\n}')
 replace("backend/iclouddrive/iclouddrive.go", '\treturn o, nil\n}\n\nfunc (f *Fs) readMetaData',
     '\tif err := o.prepareBridgePackage(ctx); err != nil {\n\t\treturn nil, err\n\t}\n\treturn o, nil\n}\n\nfunc (f *Fs) readMetaData')

@@ -56,7 +56,7 @@ func (o *Object) prepareBridgePackage(ctx context.Context) error {
 		return shouldRetry(ctx, resp, err)
 	})
 	if err != nil {
-		return fmt.Errorf("cannot resolve complete iWork document: %w", err)
+		return fmt.Errorf("cannot resolve complete iWork document %q: %w", o.remote, err)
 	}
 	if !packageToken {
 		return nil // A flat .pages/.numbers/.key file has ordinary data-token semantics.

@@ -65,6 +65,8 @@ if state.get('capabilities', {}).get('iwork_packages', 0) < 2:
     sys.exit('The running API has older iWork handling. Recreate the bridge container first.')
 if state.get('capabilities', {}).get('iwork_download_size', 0) < 1:
     sys.exit('The running rclone does not contain the iCloud ZIP-size fix. Rebuild and recreate icloud-bridge first.')
+if state.get('capabilities', {}).get('icloud_download_errors', 0) < 1:
+    sys.exit('The running rclone does not contain the download-link fix. Rebuild and recreate icloud-bridge first.')
 old = dict(job)
 job['iwork_packages'] = True
 workarounds = {'*.pages', '*.pages/**', '*.numbers', '*.numbers/**', '*.key', '*.key/**'}
@@ -73,6 +75,7 @@ removed = len(old['excludes']) - len(job['excludes'])
 if job != old:
     job = api('jobs/' + job['id'], job)
 print('Running worker verified against this checkout (iWork revision 2).')
+print('rclone: ' + state.get('rclone_version', 'unknown'))
 print('Job: ' + job['name'])
 print('Automatic complete Pages/Numbers/Keynote copies: enabled.')
 if removed:
@@ -93,7 +96,8 @@ try {
     ]);
     $health = json_decode((string)$response->getBody(), true, 512, JSON_THROW_ON_ERROR);
     if (($health['status'] ?? '') !== 'ok' || ($health['capabilities']['iwork_packages'] ?? 0) < 2
-        || ($health['capabilities']['iwork_download_size'] ?? 0) < 1) {
+        || ($health['capabilities']['iwork_download_size'] ?? 0) < 1
+        || ($health['capabilities']['icloud_download_errors'] ?? 0) < 1) {
         throw new \RuntimeException('Nextcloud is connected to an older or unavailable bridge. Check the configured worker URL and duplicate Docker network aliases.');
     }
     echo "Nextcloud reaches the updated iWork handler through its configured bridge URL.\n";
